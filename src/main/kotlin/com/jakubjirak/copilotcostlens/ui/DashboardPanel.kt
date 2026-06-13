@@ -316,13 +316,31 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private fun color(key: String, fallback: Color): Color = UIManager.getColor(key) ?: fallback
 
+    private fun blend(a: Color, b: Color, t: Double): Color = Color(
+        (a.red + (b.red - a.red) * t).toInt().coerceIn(0, 255),
+        (a.green + (b.green - a.green) * t).toInt().coerceIn(0, 255),
+        (a.blue + (b.blue - a.blue) * t).toInt().coerceIn(0, 255),
+    )
+
+    private fun luminance(c: Color): Double = (0.299 * c.red + 0.587 * c.green + 0.114 * c.blue) / 255.0
+
     private fun themeStyle(): String {
-        val bg = color("Editor.background", JBColor.background())
-        val fg = color("Editor.foreground", JBColor.foreground())
-        val panel = color("Panel.background", JBColor.background())
-        val border = color("Component.borderColor", JBColor.border())
-        val muted = color("Label.disabledForeground", JBColor.GRAY)
-        val accent = color("Link.activeForeground", JBColor(Color(0x3794ff), Color(0x3794ff)))
+        // The dashboard HTML was designed for a high-contrast content surface.
+        // IDE named colors (esp. the muddy tool-window grays) often fail WCAG,
+        // so we use proven dark/light content palettes and only borrow the IDE
+        // accent. `dark` is decided by the actual IDE background luminance.
+        val ideBg = color("ToolWindow.background", color("Panel.background", JBColor.background()))
+        val dark = luminance(ideBg) < 0.5
+
+        val bg: Color; val fg: Color; val muted: Color; val card: Color; val border: Color
+        if (dark) {
+            bg = Color(0x1e, 0x22, 0x27); fg = Color(0xe6, 0xea, 0xf0)
+            muted = Color(0x9d, 0xa7, 0xb3); card = Color(0x29, 0x2e, 0x36); border = Color(0x3a, 0x41, 0x4b)
+        } else {
+            bg = Color(0xff, 0xff, 0xff); fg = Color(0x1f, 0x23, 0x28)
+            muted = Color(0x44, 0x4c, 0x54); card = Color(0xf6, 0xf8, 0xfa); border = Color(0xd0, 0xd7, 0xde)
+        }
+        val accent = color("Link.activeForeground", JBColor(Color(0x1f6feb), Color(0x4daafc)))
         val button = color("Button.default.startBackground", accent)
         return """
             <style>
@@ -330,17 +348,18 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
               --vscode-editor-background: ${hex(bg)};
               --vscode-editor-foreground: ${hex(fg)};
               --vscode-descriptionForeground: ${hex(muted)};
-              --vscode-editorWidget-background: ${hex(panel)};
+              --vscode-editorWidget-background: ${hex(card)};
               --vscode-widget-border: ${hex(border)};
-              --vscode-charts-blue: #3794ff; --vscode-charts-purple: #b180d7;
-              --vscode-charts-green: #89d185; --vscode-charts-orange: #d18616;
-              --vscode-charts-yellow: #cca700; --vscode-charts-red: #f14c4c;
+              --vscode-charts-blue: ${if (dark) "#4daafc" else "#1f6feb"}; --vscode-charts-purple: ${if (dark) "#c191e0" else "#8250df"};
+              --vscode-charts-green: ${if (dark) "#89d185" else "#1a7f37"}; --vscode-charts-orange: #e0883a;
+              --vscode-charts-yellow: #d4a72c; --vscode-charts-red: #f14c4c;
               --vscode-font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-              --vscode-dropdown-background: ${hex(panel)}; --vscode-dropdown-foreground: ${hex(fg)};
-              --vscode-input-background: ${hex(panel)}; --vscode-input-foreground: ${hex(fg)};
+              --vscode-dropdown-background: ${hex(card)}; --vscode-dropdown-foreground: ${hex(fg)};
+              --vscode-input-background: ${hex(card)}; --vscode-input-foreground: ${hex(fg)};
               --vscode-input-border: ${hex(border)};
               --vscode-button-background: ${hex(button)}; --vscode-button-foreground: #ffffff;
             }
+            body { color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); }
             </style>
         """.trimIndent()
     }

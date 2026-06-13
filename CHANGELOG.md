@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.2] — 2026-06-13
+
+### Fixed
+
+- **Low-contrast, hard-to-read dashboard text.** The webview theme was derived from the IDE's tool-window grays, which often fail readability. It now uses high-contrast content palettes (near-white text on a dark surface / near-black on light), keyed to the IDE's dark/light mode and accented with the IDE link color — comfortably meeting WCAG AA for primary text and AA for secondary text.
+
 ## [1.0.1] — 2026-06-13
 
 ### Fixed
