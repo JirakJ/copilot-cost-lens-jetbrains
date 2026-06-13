@@ -100,6 +100,7 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             extraStorageRoots = s.extraStorageRoots,
             claudeCodeEnabled = s.claudeCodeEnabled,
             copilotCliEnabled = s.copilotCliEnabled,
+            jetbrainsCopilotEnabled = s.jetbrainsCopilotEnabled,
             estimationEnabled = s.estimationEnabled,
             charsPerToken = s.charsPerToken,
         )

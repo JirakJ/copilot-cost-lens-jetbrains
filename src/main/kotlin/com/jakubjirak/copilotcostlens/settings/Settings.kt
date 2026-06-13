@@ -14,6 +14,7 @@ data class CostLensState(
     @JvmField var warnAtPercent: Int = 80,
     @JvmField var claudeCodeEnabled: Boolean = true,
     @JvmField var copilotCliEnabled: Boolean = true,
+    @JvmField var jetbrainsCopilotEnabled: Boolean = false,
     @JvmField var estimationEnabled: Boolean = true,
     @JvmField var charsPerToken: Int = 4,
     @JvmField var statusBarEnabled: Boolean = true,

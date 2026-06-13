@@ -24,6 +24,7 @@ Cost Lens combines the same local sources as the VS Code edition:
 | VS Code: `GitHub.copilot-chat/transcripts`, `debug-logs`, `chatSessions` | exact tokens / billed credits (estimation fallback) |
 | Copilot CLI: `~/.copilot/session-state/**` | exact per-model tokens, billed premium requests / AI-credit units |
 | Claude Code: `~/.claude/projects/**/*.jsonl` | exact per-request tokens incl. cache read/write |
+| JetBrains Copilot: `~/.config/github-copilot/<ide>/**` (opt-in) | **estimated** — repo + models recovered, cost estimated from content (no token counts stored by the plugin) |
 
 Costs use billed units when present (`1 credit = $0.01`, or `$0.04`/premium request), otherwise token × model rate. Token buckets are disjoint (fresh input / cache read / cache write / output).
 

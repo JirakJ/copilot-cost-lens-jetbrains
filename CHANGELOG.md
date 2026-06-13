@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.0] — 2026-06-13
+
+### Added
+
+- **JetBrains Copilot usage (estimated, opt-in).** A new source recovers GitHub Copilot activity from the JetBrains plugin's local session store (`~/.config/github-copilot/<ide>/`). It attributes usage to the right repository (from the project path), identifies the models used, and **estimates** cost from chat content — every entry is marked `~est`. Off by default; enable it in Settings → Copilot Cost Lens. The JetBrains plugin does not persist token counts locally (unlike the Copilot CLI and Claude Code), so exact pricing isn't possible; the reader is resilient and degrades to "nothing" if the undocumented store format changes.
+
 ## [1.0.2] — 2026-06-13
 
 ### Fixed

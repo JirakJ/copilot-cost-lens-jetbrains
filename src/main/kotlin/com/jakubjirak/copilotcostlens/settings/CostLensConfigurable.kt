@@ -30,6 +30,12 @@ class CostLensConfigurable : BoundConfigurable("Copilot Cost Lens") {
             group("Sources") {
                 row { checkBox("Include GitHub Copilot CLI usage").bindSelected(s::copilotCliEnabled) }
                 row { checkBox("Include Claude Code usage").bindSelected(s::claudeCodeEnabled) }
+                row {
+                    checkBox("Include JetBrains Copilot usage (estimated)").bindSelected(s::jetbrainsCopilotEnabled)
+                }.comment(
+                    "The JetBrains Copilot plugin does not store token counts locally, so this " +
+                        "source estimates cost from chat content and is always marked ~est.",
+                )
                 row { checkBox("Estimate sessions without exact token counts").bindSelected(s::estimationEnabled) }
                 row("Characters per token (estimates only):") {
                     intTextField().bindIntText(s::charsPerToken)

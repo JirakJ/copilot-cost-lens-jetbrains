@@ -12,17 +12,21 @@ import com.jakubjirak.copilotcostlens.sources.detectStorageRoots
 import com.jakubjirak.copilotcostlens.sources.findChatSessions
 import com.jakubjirak.copilotcostlens.sources.findClaudeCodeFiles
 import com.jakubjirak.copilotcostlens.sources.findCopilotCliFiles
+import com.jakubjirak.copilotcostlens.sources.findJetBrainsCopilotDbs
 import com.jakubjirak.copilotcostlens.sources.findVsCodeJsonl
 import com.jakubjirak.copilotcostlens.sources.listWorkspaceStorageDirs
 import com.jakubjirak.copilotcostlens.sources.parseChatSession
 import com.jakubjirak.copilotcostlens.sources.parseClaudeCode
+import com.jakubjirak.copilotcostlens.sources.defaultJetBrainsCopilotRoot
 import com.jakubjirak.copilotcostlens.sources.parseCopilotCli
+import com.jakubjirak.copilotcostlens.sources.parseJetBrainsCopilot
 import com.jakubjirak.copilotcostlens.sources.parseVsCodeJsonl
 
 data class StoreConfig(
     val extraStorageRoots: List<String> = emptyList(),
     val claudeCodeEnabled: Boolean = true,
     val copilotCliEnabled: Boolean = true,
+    val jetbrainsCopilotEnabled: Boolean = false,
     val estimationEnabled: Boolean = true,
     val charsPerToken: Int = 4,
     val priceOverrides: Map<String, Map<String, Double>> = emptyMap(),
@@ -83,6 +87,11 @@ class UsageStore(@Volatile private var config: StoreConfig) {
             val root = defaultCopilotCliRoot()
             scannedRoots += root.absolutePath
             for ((file, sid) in findCopilotCliFiles(root)) add(parseCopilotCli(file, sid, cfg.charsPerToken))
+        }
+        if (cfg.jetbrainsCopilotEnabled) guard("copilot-jetbrains") {
+            val root = defaultJetBrainsCopilotRoot()
+            scannedRoots += root.absolutePath
+            for (db in findJetBrainsCopilotDbs(root)) add(parseJetBrainsCopilot(db, cfg.charsPerToken))
         }
 
         val merged = dedupeBySession(exact, estimated)
