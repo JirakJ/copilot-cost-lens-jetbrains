@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.1] — 2026-06-13
+
+### Fixed
+
+- **Wrong repository names for git worktrees.** Work done in a git worktree (e.g. Claude Code's `<repo>/.claude/worktrees/<slug>`) was attributed to the random worktree slug instead of the real repository — a worktree's `.git` is a file (`gitdir: …`), so the remote couldn't be read and the folder basename was used. The resolver now follows the worktree pointer to the main repo's config and reads the `owner/repo` remote; folder-name fallback also skips `.git` and worktree scaffolding.
+
 ## [1.1.0] — 2026-06-13
 
 ### Added

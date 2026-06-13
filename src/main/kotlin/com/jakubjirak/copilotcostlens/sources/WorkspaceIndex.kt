@@ -24,8 +24,23 @@ class WorkspaceIndex {
 
     private fun resolveFolderUncached(folderPath: String): RepoRef {
         val slug = readGitRemoteSlug(folderPath)
-        return RepoRef(name = slug ?: File(folderPath).name, folderPath = folderPath, remoteSlug = slug)
+        return RepoRef(name = slug ?: folderName(folderPath), folderPath = folderPath, remoteSlug = slug)
     }
+}
+
+/**
+ * A human-readable folder name when there's no git remote. Skips meaningless
+ * basenames (".git", a worktree dir, empty) by walking up to a real name.
+ */
+internal fun folderName(folderPath: String): String {
+    val parts = folderPath.split('/', '\\').filter { it.isNotEmpty() }
+    for (i in parts.indices.reversed()) {
+        val part = parts[i]
+        if (part == ".git" || part == "worktrees" || part == ".claude") continue
+        if (i > 0 && parts[i - 1] == "worktrees") continue
+        return part
+    }
+    return parts.lastOrNull() ?: folderPath
 }
 
 internal fun readWorkspaceFolder(storageDir: File): String? {
@@ -45,10 +60,31 @@ internal fun readWorkspaceFolder(storageDir: File): String? {
 }
 
 internal fun readGitRemoteSlug(folderPath: String): String? {
-    val config = File(folderPath, ".git/config")
-    if (!config.isFile) return null
+    val config = resolveGitConfig(folderPath) ?: return null
     return try {
         parseRemoteSlug(config.readText())
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/**
+ * Locate the git config that holds the remotes. Handles git worktrees, where
+ * `<folder>/.git` is a file ("gitdir: …/.git/worktrees/<name>") and the remote
+ * lives in the main repo's "<main>/.git/config".
+ */
+private fun resolveGitConfig(folderPath: String): File? {
+    val dotGit = File(folderPath, ".git")
+    if (dotGit.isDirectory) return File(dotGit, "config")
+    if (!dotGit.isFile) return null
+    return try {
+        val gitdir = Regex("gitdir:\\s*(.+)").find(dotGit.readText())?.groupValues?.get(1)?.trim() ?: return null
+        val abs = if (File(gitdir).isAbsolute) File(gitdir) else File(folderPath, gitdir).canonicalFile
+        val marker = File.separator + "worktrees" + File.separator
+        val path = abs.path
+        val idx = path.lastIndexOf(marker)
+        val commonDir = if (idx >= 0) File(path.substring(0, idx)) else abs
+        File(commonDir, "config")
     } catch (_: Exception) {
         null
     }
