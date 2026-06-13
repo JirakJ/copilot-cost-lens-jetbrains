@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.1] — 2026-06-13
+
+### Fixed
+
+- **Dashboard showed "No usage found" even when data existed.** The webview received its data only via the page's own `ready` handshake, which could race the JCEF JS bridge and never deliver the payload. Data is now pushed from the browser's load-end handler (and again when the background scan finishes), so the dashboard reliably renders. The scan layer itself was always correct (verified at 6,000+ events across Copilot, Copilot CLI and Claude Code).
+
 ## [1.0.0] — 2026-06-13
 
 Initial release — JetBrains edition of Copilot Cost Lens.

@@ -72,6 +72,20 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             ApplicationManager.getApplication().invokeLater { handleMessage(raw) }
             null
         }
+        // Push data when the page finishes loading — the cefQuery bridge and the
+        // webview's message listener are both ready by then, so we don't depend
+        // on the webview's own 'ready' handshake (which can race the bridge).
+        b.jbCefClient.addLoadHandler(
+            object : org.cef.handler.CefLoadHandlerAdapter() {
+                override fun onLoadEnd(cefBrowser: org.cef.browser.CefBrowser?, frame: org.cef.browser.CefFrame?, httpStatusCode: Int) {
+                    if (frame?.isMain != false) {
+                        ready = true
+                        ApplicationManager.getApplication().invokeLater { postData() }
+                    }
+                }
+            },
+            b.cefBrowser,
+        )
         b.loadHTML(buildHtml(query))
         add(b.component as Component, BorderLayout.CENTER)
     }
@@ -111,7 +125,7 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             try {
                 store.refresh()
                 ApplicationManager.getApplication().invokeLater { if (ready) postData() }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 log.warn("Cost Lens scan failed", e)
             }
         }
