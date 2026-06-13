@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.0] — 2026-06-13
+
+### Added
+
+- **Automatic background refresh.** The dashboard now rescans on its own every 60 seconds, so new usage appears without clicking Refresh. Backed by a new mtime+size file cache so repeat scans only re-parse changed files and stay cheap.
+
 ## [1.1.1] — 2026-06-13
 
 ### Fixed

@@ -13,6 +13,7 @@ import com.jakubjirak.copilotcostlens.sources.findChatSessions
 import com.jakubjirak.copilotcostlens.sources.findClaudeCodeFiles
 import com.jakubjirak.copilotcostlens.sources.findCopilotCliFiles
 import com.jakubjirak.copilotcostlens.sources.findJetBrainsCopilotDbs
+import java.io.File
 import com.jakubjirak.copilotcostlens.sources.findVsCodeJsonl
 import com.jakubjirak.copilotcostlens.sources.listWorkspaceStorageDirs
 import com.jakubjirak.copilotcostlens.sources.parseChatSession
@@ -41,9 +42,12 @@ data class ScanStats(
     val scannedRoots: List<String>,
 )
 
+private data class CacheEntry(val mtime: Long, val size: Long, val usages: List<RawUsage>)
+
 /** Scans every data source, dedupes and prices the result. */
 class UsageStore(@Volatile private var config: StoreConfig) {
     private val workspaceIndex = WorkspaceIndex()
+    private val fileCache = HashMap<String, CacheEntry>()
     @Volatile var events: List<UsageEvent> = emptyList()
         private set
     @Volatile var stats: ScanStats = ScanStats(emptyMap(), 0, 0, 0, emptyList(), emptyList())
@@ -67,31 +71,43 @@ class UsageStore(@Volatile private var config: StoreConfig) {
         fun guard(source: String, work: () -> Unit) {
             try { work() } catch (e: Exception) { errors += "$source: ${e.message}" }
         }
+        // serve unchanged files from an mtime+size cache so periodic rescans are cheap
+        fun cached(file: File, parse: () -> List<RawUsage>): List<RawUsage> {
+            if (!file.exists()) { fileCache.remove(file.path); return emptyList() }
+            val key = file.path
+            val mtime = file.lastModified()
+            val size = file.length()
+            val hit = fileCache[key]
+            if (hit != null && hit.mtime == mtime && hit.size == size) return hit.usages
+            val parsed = parse()
+            fileCache[key] = CacheEntry(mtime, size, parsed)
+            return parsed
+        }
 
         guard("vscode") {
             val roots = detectStorageRoots(cfg.extraStorageRoots)
             scannedRoots += roots.map { it.absolutePath }
             for (root in roots) for (ws in listWorkspaceStorageDirs(root)) {
-                for ((file, sid) in findVsCodeJsonl(ws)) add(parseVsCodeJsonl(file, sid, ws))
+                for ((file, sid) in findVsCodeJsonl(ws)) add(cached(file) { parseVsCodeJsonl(file, sid, ws) })
                 if (cfg.estimationEnabled) {
-                    for (file in findChatSessions(ws)) add(parseChatSession(file, ws, cfg.charsPerToken))
+                    for (file in findChatSessions(ws)) add(cached(file) { parseChatSession(file, ws, cfg.charsPerToken) })
                 }
             }
         }
         if (cfg.claudeCodeEnabled) guard("claude-code") {
             val root = defaultClaudeCodeRoot()
             scannedRoots += root.absolutePath
-            for (file in findClaudeCodeFiles(root)) add(parseClaudeCode(file))
+            for (file in findClaudeCodeFiles(root)) add(cached(file) { parseClaudeCode(file) })
         }
         if (cfg.copilotCliEnabled) guard("copilot-cli") {
             val root = defaultCopilotCliRoot()
             scannedRoots += root.absolutePath
-            for ((file, sid) in findCopilotCliFiles(root)) add(parseCopilotCli(file, sid, cfg.charsPerToken))
+            for ((file, sid) in findCopilotCliFiles(root)) add(cached(file) { parseCopilotCli(file, sid, cfg.charsPerToken) })
         }
         if (cfg.jetbrainsCopilotEnabled) guard("copilot-jetbrains") {
             val root = defaultJetBrainsCopilotRoot()
             scannedRoots += root.absolutePath
-            for (db in findJetBrainsCopilotDbs(root)) add(parseJetBrainsCopilot(db, cfg.charsPerToken))
+            for (db in findJetBrainsCopilotDbs(root)) add(cached(db.file) { parseJetBrainsCopilot(db, cfg.charsPerToken) })
         }
 
         val merged = dedupeBySession(exact, estimated)

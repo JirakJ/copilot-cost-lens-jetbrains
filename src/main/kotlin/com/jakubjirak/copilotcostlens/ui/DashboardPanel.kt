@@ -37,6 +37,8 @@ import java.io.File
 import javax.swing.JPanel
 import javax.swing.UIManager
 
+private const val AUTO_REFRESH_MS = 60_000
+
 class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val log = Logger.getInstance(DashboardPanel::class.java)
     private val gson: Gson = GsonBuilder().create()
@@ -49,9 +51,23 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private var selectedGroup: String? = null
     @Volatile private var ready = false
 
+    private val autoRefresh = com.intellij.util.Alarm(com.intellij.util.Alarm.ThreadToUse.POOLED_THREAD, this)
+
     init {
         if (JBCefApp.isSupported()) initBrowser() else fallback()
         scanAsync()
+        scheduleAutoRefresh()
+    }
+
+    /**
+     * Periodically rescans in the background so users never have to click
+     * Refresh. The mtime+size file cache keeps repeat scans cheap.
+     */
+    private fun scheduleAutoRefresh() {
+        if (autoRefresh.isDisposed) return
+        autoRefresh.addRequest({
+            try { scanAsync() } finally { scheduleAutoRefresh() }
+        }, AUTO_REFRESH_MS)
     }
 
     private fun fallback() {
