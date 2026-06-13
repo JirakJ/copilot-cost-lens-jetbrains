@@ -1,0 +1,14 @@
+[versions]
+kotlin = "2.1.0"
+intellij-platform = "2.3.0"
+junit = "5.11.4"
+detekt = "1.23.7"
+
+[libraries]
+junit-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit" }
+junit-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+intellij-platform = { id = "org.jetbrains.intellij.platform", version.ref = "intellij-platform" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }

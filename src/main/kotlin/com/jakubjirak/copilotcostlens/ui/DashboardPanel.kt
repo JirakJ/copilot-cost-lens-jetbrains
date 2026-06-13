@@ -1,0 +1,337 @@
+package com.jakubjirak.copilotcostlens.ui
+
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileChooser.FileChooserFactory
+import com.intellij.openapi.fileChooser.FileSaverDescriptor
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.Disposer
+import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.jcef.JBCefApp
+import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefJSQuery
+import com.jakubjirak.copilotcostlens.core.ALL_TIME
+import com.jakubjirak.copilotcostlens.core.ReceiptData
+import com.jakubjirak.copilotcostlens.core.ReceiptModelLine
+import com.jakubjirak.copilotcostlens.core.availableMonths
+import com.jakubjirak.copilotcostlens.core.buildGroupDetail
+import com.jakubjirak.copilotcostlens.core.buildMonthReport
+import com.jakubjirak.copilotcostlens.core.buildReceiptPdf
+import com.jakubjirak.copilotcostlens.core.buildRepoDetail
+import com.jakubjirak.copilotcostlens.data.StoreConfig
+import com.jakubjirak.copilotcostlens.data.UsageStore
+import com.jakubjirak.copilotcostlens.pricing.PLAN_CREDITS
+import com.jakubjirak.copilotcostlens.settings.CostLensSettings
+import com.jakubjirak.copilotcostlens.settings.CostLensState
+import java.awt.BorderLayout
+import java.awt.Color
+import java.awt.Component
+import java.io.File
+import javax.swing.JPanel
+import javax.swing.UIManager
+
+class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
+    private val log = Logger.getInstance(DashboardPanel::class.java)
+    private val gson: Gson = GsonBuilder().create()
+    private val store = UsageStore(buildStoreConfig())
+    private var browser: JBCefBrowser? = null
+    private var jsQuery: JBCefJSQuery? = null
+
+    private var selectedMonth: String? = null
+    private var selectedRepo: String? = null
+    private var selectedGroup: String? = null
+    @Volatile private var ready = false
+
+    init {
+        if (JBCefApp.isSupported()) initBrowser() else fallback()
+        scanAsync()
+    }
+
+    private fun fallback() {
+        add(
+            JBLabel("<html><center><h2>Copilot Cost Lens</h2><p>JCEF is not available in this IDE build.</p></center></html>")
+                as Component,
+            BorderLayout.CENTER,
+        )
+    }
+
+    private fun initBrowser() {
+        val b = JBCefBrowser()
+        browser = b
+        Disposer.register(this, b)
+        val query = JBCefJSQuery.create(b as com.intellij.ui.jcef.JBCefBrowserBase)
+        jsQuery = query
+        query.addHandler { raw ->
+            ApplicationManager.getApplication().invokeLater { handleMessage(raw) }
+            null
+        }
+        b.loadHTML(buildHtml(query))
+        add(b.component as Component, BorderLayout.CENTER)
+    }
+
+    // --- config ---------------------------------------------------------------
+
+    private fun settings(): CostLensState = CostLensSettings.getInstance().data
+
+    private fun buildStoreConfig(): StoreConfig {
+        val s = settings()
+        return StoreConfig(
+            extraStorageRoots = s.extraStorageRoots,
+            claudeCodeEnabled = s.claudeCodeEnabled,
+            copilotCliEnabled = s.copilotCliEnabled,
+            estimationEnabled = s.estimationEnabled,
+            charsPerToken = s.charsPerToken,
+        )
+    }
+
+    private fun includedCredits(): Int {
+        val s = settings()
+        return if (s.plan == "custom") s.includedCreditsPerMonth else PLAN_CREDITS[s.plan] ?: 1900
+    }
+
+    private fun projectGroups(): Map<String, List<String>> = try {
+        val obj = JsonParser.parseString(settings().projectGroupsJson).asJsonObject
+        obj.entrySet().associate { (k, v) -> k to v.asJsonArray.map { it.asString } }
+    } catch (_: Exception) {
+        emptyMap()
+    }
+
+    fun refresh() = scanAsync()
+
+    private fun scanAsync() {
+        store.updateConfig(buildStoreConfig())
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                store.refresh()
+                ApplicationManager.getApplication().invokeLater { if (ready) postData() }
+            } catch (e: Exception) {
+                log.warn("Cost Lens scan failed", e)
+            }
+        }
+    }
+
+    // --- messages from the webview --------------------------------------------
+
+    private fun currentMonth(): String {
+        val months = availableMonths(store.events)
+        val sel = selectedMonth
+        return if (sel == ALL_TIME || (sel != null && months.contains(sel))) sel else months.firstOrNull() ?: ALL_TIME
+    }
+
+    private fun handleMessage(raw: String) {
+        val msg = try { JsonParser.parseString(raw).asJsonObject } catch (_: Exception) { return }
+        when (msg.get("type")?.asString) {
+            "ready" -> { ready = true; postData() }
+            "refresh" -> refresh()
+            "selectMonth" -> { selectedMonth = msg.str("month"); selectedRepo = null; selectedGroup = null; postData() }
+            "selectRepo" -> { selectedRepo = msg.str("repo"); selectedGroup = null; postData() }
+            "selectGroup" -> { selectedGroup = msg.str("group"); selectedRepo = null; postData() }
+            "setAllowance" -> setAllowance(msg)
+            "toggleStar" -> { msg.str("repo")?.let { toggleStar(it) }; postData() }
+            "saveGroup" -> saveGroup(msg)
+            "deleteGroup" -> { msg.str("group")?.let { deleteGroup(it) }; selectedGroup = null; postData() }
+            "openRepo" -> msg.str("path")?.let { openFolder(it) }
+            "exportReceipt" -> exportReceipt(msg)
+            "openSettings" -> com.intellij.openapi.options.ShowSettingsUtil.getInstance()
+                .showSettingsDialog(project, "Copilot Cost Lens")
+            "export", "exportInvoice" -> Unit
+        }
+    }
+
+    private fun JsonObject.str(key: String): String? =
+        get(key)?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }
+
+    private fun setAllowance(msg: JsonObject) {
+        val v = msg.get("value") ?: return
+        val credits = when {
+            v.isJsonPrimitive && v.asJsonPrimitive.isNumber -> v.asInt
+            else -> Messages.showInputDialog(project, "Included AI Credits per month", "Monthly Copilot Allowance", null)
+                ?.trim()?.toIntOrNull() ?: return
+        }
+        CostLensSettings.getInstance().mutate { it.copy(plan = "custom", includedCreditsPerMonth = credits) }
+        postData()
+    }
+
+    private fun toggleStar(repo: String) = CostLensSettings.getInstance().mutate { s ->
+        val cur = s.starredRepos
+        s.copy(starredRepos = if (cur.any { it.equals(repo, true) }) cur.filterNot { it.equals(repo, true) } else cur + repo)
+    }
+
+    private fun saveGroup(msg: JsonObject) {
+        val name = msg.str("name") ?: return
+        val members = msg.getAsJsonArray("members")?.map { it.asString } ?: return
+        if (members.isEmpty()) return
+        val original = msg.str("originalName")
+        val groups = projectGroups().toMutableMap()
+        if (original != null && original != name) groups.remove(original)
+        val claimed = members.map { it.lowercase() }.toSet()
+        for ((g, ms) in groups.toMap()) if (g != name) groups[g] = ms.filterNot { it.lowercase() in claimed }
+        groups[name] = members
+        persistGroups(groups)
+        selectedGroup = name; selectedRepo = null; postData()
+    }
+
+    private fun deleteGroup(name: String) {
+        val groups = projectGroups().toMutableMap()
+        groups.remove(name)
+        persistGroups(groups)
+    }
+
+    private fun persistGroups(groups: Map<String, List<String>>) {
+        val json = gson.toJson(groups)
+        CostLensSettings.getInstance().mutate { it.copy(projectGroupsJson = json) }
+    }
+
+    private fun openFolder(path: String) {
+        val dir = File(path)
+        if (dir.isDirectory) {
+            com.intellij.ide.impl.ProjectUtil.openOrImport(dir.toPath(), project, false)
+        }
+    }
+
+    private fun exportReceipt(msg: JsonObject) {
+        val month = currentMonth()
+        val groupName = msg.str("group")
+        val repoName = msg.str("repo")
+        val data: ReceiptData? = when {
+            groupName != null -> projectGroups()[groupName]?.let { members ->
+                buildGroupDetail(store.events, groupName, members, month)?.let { d ->
+                    receiptFrom(d.group.name, d.group.let { g ->
+                        Triple(g.models.map { m -> ReceiptModelLine(m.model, m.requestCount, m.credits, m.usd, m.inputTokens, m.outputTokens, m.cachedTokens, m.cacheWriteTokens) }, listOf(g.inputTokens, g.outputTokens, g.cachedTokens, g.cacheWriteTokens, g.sessionCount.toLong()), Triple(g.credits, g.usd, g.hasEstimates)) },
+                        month, d.group.repos.map { it.repo.name to it.usd }, d.providers.map { it.provider to it.usd })
+                }
+            }
+            repoName != null -> buildRepoDetail(store.events, repoName, month)?.let { d ->
+                val s = d.summary
+                receiptFrom(s.repo.name, Triple(s.models.map { m -> ReceiptModelLine(m.model, m.requestCount, m.credits, m.usd, m.inputTokens, m.outputTokens, m.cachedTokens, m.cacheWriteTokens) }, listOf(s.inputTokens, s.outputTokens, s.cachedTokens, s.cacheWriteTokens, s.sessionCount.toLong()), Triple(s.credits, s.usd, s.hasEstimates)),
+                    month, emptyList(), d.providers.map { it.provider to it.usd })
+            }
+            else -> null
+        }
+        if (data == null) {
+            Messages.showInfoMessage(project, "No usage data for this period.", "Copilot Cost Lens")
+            return
+        }
+        val safe = (groupName ?: repoName ?: "receipt").replace(Regex("[^a-zA-Z0-9._-]+"), "-")
+        val descriptor = FileSaverDescriptor("Export Receipt", "Save the receipt PDF", "pdf")
+        val wrapper = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
+            .save("receipt-$safe-${if (month == ALL_TIME) "all-time" else month}.pdf") ?: return
+        wrapper.file.writeBytes(buildReceiptPdf(data))
+        Messages.showInfoMessage(project, "Receipt saved to ${wrapper.file.absolutePath}", "Copilot Cost Lens")
+    }
+
+    private fun receiptFrom(
+        title: String,
+        body: Triple<List<ReceiptModelLine>, List<Long>, Triple<Double, Double, Boolean>>,
+        month: String,
+        repoLines: List<Pair<String, Double>>,
+        providers: List<Pair<String, Double>>,
+    ): ReceiptData {
+        val (models, tokens, totals) = body
+        return ReceiptData(
+            title = title, period = month, models = models, repoLines = repoLines,
+            inputTokens = tokens[0], outputTokens = tokens[1], cachedTokens = tokens[2],
+            cacheWriteTokens = tokens[3], sessionCount = tokens[4].toInt(),
+            providers = providers.map { providerName(it.first) to it.second },
+            totalCredits = totals.first, totalUsd = totals.second, hasEstimates = totals.third,
+        )
+    }
+
+    private fun providerName(id: String) = when (id) {
+        "copilot" -> "Copilot"; "copilot-cli" -> "Copilot CLI"; "claude-code" -> "Claude Code"; else -> id
+    }
+
+    // --- push data to the webview ---------------------------------------------
+
+    private fun postData() {
+        val b = browser ?: return
+        val month = currentMonth()
+        val events = store.events
+        val groups = projectGroups()
+        val report = buildMonthReport(events, month, includedCredits(), groups)
+        val detail = selectedRepo?.let { buildRepoDetail(events, it, month) }
+        if (selectedRepo != null && detail == null) selectedRepo = null
+        val groupDetail = selectedGroup?.let { g -> groups[g]?.let { buildGroupDetail(events, g, it, month) } }
+        if (selectedGroup != null && groupDetail == null) selectedGroup = null
+
+        val allRepos = buildMonthReport(events, ALL_TIME, 0).repos.map { mapOf("name" to it.repo.name, "usd" to it.usd) }
+        val payload = mapOf(
+            "type" to "data",
+            "report" to report,
+            "months" to availableMonths(events),
+            "selectedMonth" to month,
+            "detail" to detail,
+            "groupDetail" to groupDetail,
+            "allRepos" to allRepos,
+            "groupsConfig" to groups,
+            "starred" to settings().starredRepos,
+            "stats" to store.stats,
+        )
+        val json = gson.toJson(payload)
+        b.cefBrowser.executeJavaScript("window.postMessage($json, '*')", b.cefBrowser.url, 0)
+    }
+
+    // --- html with theme + bridge ---------------------------------------------
+
+    private fun buildHtml(query: JBCefJSQuery): String {
+        val template = javaClass.getResourceAsStream("/webview/dashboard.html")!!
+            .bufferedReader().use { it.readText() }
+        val theme = themeStyle()
+        val bridge = """
+            <script>
+              window.acquireVsCodeApi = function () {
+                return {
+                  postMessage: function (m) { ${query.inject("JSON.stringify(m)")} },
+                  getState: function () { return null; },
+                  setState: function () {},
+                };
+              };
+            </script>
+        """.trimIndent()
+        return template.replace("</head>", "$theme$bridge</head>")
+    }
+
+    private fun hex(c: Color): String = "#%02x%02x%02x".format(c.red, c.green, c.blue)
+
+    private fun color(key: String, fallback: Color): Color = UIManager.getColor(key) ?: fallback
+
+    private fun themeStyle(): String {
+        val bg = color("Editor.background", JBColor.background())
+        val fg = color("Editor.foreground", JBColor.foreground())
+        val panel = color("Panel.background", JBColor.background())
+        val border = color("Component.borderColor", JBColor.border())
+        val muted = color("Label.disabledForeground", JBColor.GRAY)
+        val accent = color("Link.activeForeground", JBColor(Color(0x3794ff), Color(0x3794ff)))
+        val button = color("Button.default.startBackground", accent)
+        return """
+            <style>
+            :root {
+              --vscode-editor-background: ${hex(bg)};
+              --vscode-editor-foreground: ${hex(fg)};
+              --vscode-descriptionForeground: ${hex(muted)};
+              --vscode-editorWidget-background: ${hex(panel)};
+              --vscode-widget-border: ${hex(border)};
+              --vscode-charts-blue: #3794ff; --vscode-charts-purple: #b180d7;
+              --vscode-charts-green: #89d185; --vscode-charts-orange: #d18616;
+              --vscode-charts-yellow: #cca700; --vscode-charts-red: #f14c4c;
+              --vscode-font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+              --vscode-dropdown-background: ${hex(panel)}; --vscode-dropdown-foreground: ${hex(fg)};
+              --vscode-input-background: ${hex(panel)}; --vscode-input-foreground: ${hex(fg)};
+              --vscode-input-border: ${hex(border)};
+              --vscode-button-background: ${hex(button)}; --vscode-button-foreground: #ffffff;
+            }
+            </style>
+        """.trimIndent()
+    }
+
+    override fun dispose() {
+        jsQuery?.let { runCatching { Disposer.dispose(it) } }
+    }
+}

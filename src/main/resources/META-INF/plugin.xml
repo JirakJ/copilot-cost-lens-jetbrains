@@ -1,0 +1,49 @@
+<idea-plugin>
+    <id>com.jakubjirak.copilotcostlens</id>
+    <name>Copilot Cost Lens</name>
+    <vendor email="support@jakubjirak.com" url="https://github.com/JirakJ">Jakub Jirák</vendor>
+
+    <description><![CDATA[
+<h2>Copilot Cost Lens — AI Usage &amp; Spend Tracker</h2>
+<p>
+  Know exactly what your AI coding tools cost you — <b>per repository, per model, per day</b>.
+  100% local and private. Copilot Cost Lens reads the logs that GitHub Copilot
+  (VS Code Chat <b>and</b> the Copilot CLI) and Claude Code already keep on your machine,
+  attributes every request to the repository you were working in, prices it using the
+  providers' model rates, and shows it all in a live dashboard tool window.
+</p>
+<h3>Features</h3>
+<ul>
+  <li><b>Cost per repository</b> — every request attributed to its repo via the git remote.</li>
+  <li><b>All your AI tools in one ledger</b> — VS Code Copilot Chat, GitHub Copilot CLI and Claude Code, with a per-provider spend split.</li>
+  <li><b>Token anatomy &amp; effective $/1M</b> — input, output, cache read and cache write tokens per model, and the blended price actually paid.</li>
+  <li><b>Dashboard</b> — spend, allowance gauge, end-of-month forecast and burn-rate, cost-by-repo and model charts, daily trend and an activity heatmap.</li>
+  <li><b>Project groups</b> — roll several repositories into one project; combined receipt PDF with a per-repository breakdown.</li>
+  <li><b>Filter, sort, star</b> — built for 100+ repositories.</li>
+  <li><b>Receipt PDF export</b> — a classic printed-receipt per repository or project.</li>
+  <li><b>Budgets &amp; credit alerts</b> — set your plan allowance and absolute AI-credit thresholds.</li>
+</ul>
+<p><b>Privacy:</b> everything happens on your machine — no network requests, no telemetry.</p>
+<p><i>Independent open-source project, not affiliated with GitHub or Microsoft.</i></p>
+    ]]></description>
+
+    <change-notes><![CDATA[
+<ul><li><b>1.0.0</b> — Initial release: dashboard, per-repository cost tracking across Copilot Chat, Copilot CLI and Claude Code, project groups, receipts, budgets and the activity heatmap.</li></ul>
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="Copilot Cost Lens"
+            anchor="right"
+            factoryClass="com.jakubjirak.copilotcostlens.ui.CostLensToolWindowFactory"
+            icon="/META-INF/toolWindowIcon.svg"/>
+        <applicationService
+            serviceImplementation="com.jakubjirak.copilotcostlens.settings.CostLensSettings"/>
+        <applicationConfigurable
+            instance="com.jakubjirak.copilotcostlens.settings.CostLensConfigurable"
+            id="com.jakubjirak.copilotcostlens.settings"
+            displayName="Copilot Cost Lens"/>
+    </extensions>
+</idea-plugin>
