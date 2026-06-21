@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.2] — 2026-06-21
+
+### Fixed
+
+- **Cards flashed on every update.** A fade-in animation re-ran on each render, blinking the dashboard whenever data changed. Removed it — updates repaint silently (the spinner still covers the first load).
+
 ## [1.3.1] — 2026-06-21
 
 ### Fixed
