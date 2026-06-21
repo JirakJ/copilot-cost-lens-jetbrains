@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.1] — 2026-06-21
+
+### Fixed
+
+- **Periodic flicker and scroll-jump on auto-refresh.** Progressive painting now runs only on the first load; later 60s refreshes publish once instead of flashing partial data. The view also keeps your scroll position when refreshing the same screen.
+
 ## [1.3.0] — 2026-06-13
 
 ### Changed

@@ -52,6 +52,7 @@ class UsageStore(@Volatile private var config: StoreConfig) {
         private set
     @Volatile var stats: ScanStats = ScanStats(emptyMap(), 0, 0, 0, emptyList(), emptyList())
         private set
+    @Volatile private var firstScanDone = false
 
     fun updateConfig(newConfig: StoreConfig) { config = newConfig }
 
@@ -69,8 +70,9 @@ class UsageStore(@Volatile private var config: StoreConfig) {
             filesParsed++
             for (u in list) (if (u.estimated) estimated else exact) += u
         }
-        // publish what we have after each source so the dashboard paints the
-        // first results immediately instead of waiting for the whole scan
+        // paint progressively only on the first scan (empty dashboard); later
+        // refreshes publish once at the end so they don't flash partial data
+        val progressive = !firstScanDone
         fun publish() {
             events = toEvents(dedupeBySession(exact, estimated), pricing)
             val providers = LinkedHashMap<String, Int>()
@@ -84,7 +86,7 @@ class UsageStore(@Volatile private var config: StoreConfig) {
         }
         fun guard(source: String, work: () -> Unit) {
             try { work() } catch (e: Exception) { errors += "$source: ${e.message}" }
-            publish()
+            if (progressive) publish()
         }
         // serve unchanged files from an mtime+size cache so periodic rescans are cheap
         fun cached(file: File, parse: () -> List<RawUsage>): List<RawUsage> {
@@ -125,6 +127,8 @@ class UsageStore(@Volatile private var config: StoreConfig) {
             for (db in findJetBrainsCopilotDbs(root)) add(cached(db.file) { parseJetBrainsCopilot(db, cfg.charsPerToken) })
         }
 
+        publish() // one final publish (the only one on non-first scans)
+        firstScanDone = true
         return events
     }
 
