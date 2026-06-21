@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.13.2] — 2026-06-21
+
+Version aligned with the VS Code edition (no functional change since 1.4.0 — same status-bar widget and shared scan service). Both editions now share a version number.
+
 ## [1.4.0] — 2026-06-21
 
 ### Added
