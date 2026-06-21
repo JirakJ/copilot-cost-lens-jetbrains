@@ -25,6 +25,8 @@ import com.jakubjirak.copilotcostlens.core.buildGroupDetail
 import com.jakubjirak.copilotcostlens.core.buildMonthReport
 import com.jakubjirak.copilotcostlens.core.buildReceiptPdf
 import com.jakubjirak.copilotcostlens.core.buildRepoDetail
+import com.jakubjirak.copilotcostlens.core.monthKey
+import com.jakubjirak.copilotcostlens.core.toCsv
 import com.jakubjirak.copilotcostlens.data.CostLensService
 import com.jakubjirak.copilotcostlens.pricing.PLAN_CREDITS
 import com.jakubjirak.copilotcostlens.settings.CostLensSettings
@@ -135,8 +137,26 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             "exportReceipt" -> exportReceipt(msg)
             "openSettings" -> com.intellij.openapi.options.ShowSettingsUtil.getInstance()
                 .showSettingsDialog(project, "Copilot Cost Lens")
-            "export", "exportInvoice" -> Unit
+            "export" -> exportData(msg.str("format") ?: "csv")
+            "exportInvoice" -> Unit
         }
+    }
+
+    private fun exportData(format: String) {
+        val month = currentMonth()
+        val events = if (month == ALL_TIME) store.events else store.events.filter { monthKey(it.timestamp) == month }
+        if (events.isEmpty()) {
+            Messages.showInfoMessage(project, "No usage data to export yet.", "Copilot Cost Lens")
+            return
+        }
+        val ext = if (format == "json") "json" else "csv"
+        val content = if (format == "json") gson.toJson(events) else toCsv(events)
+        val period = if (month == ALL_TIME) "all-time" else month
+        val descriptor = FileSaverDescriptor("Export Usage", "Save the usage export", ext)
+        val wrapper = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
+            .save("copilot-usage-$period.$ext") ?: return
+        wrapper.file.writeText(content)
+        Messages.showInfoMessage(project, "Exported ${events.size} records to ${wrapper.file.absolutePath}", "Copilot Cost Lens")
     }
 
     private fun JsonObject.str(key: String): String? =
@@ -289,7 +309,22 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
               };
             </script>
         """.trimIndent()
-        return template.replace("</head>", "$theme$bridge</head>")
+        return template
+            .replace("__CCL_S__", gson.toJson(localizedStrings()))
+            .replace("</head>", "$theme$bridge</head>")
+    }
+
+    /** English UI strings, overlaid with the IDE-language translation when available. */
+    private fun localizedStrings(): Map<String, String> {
+        fun res(name: String) = javaClass.getResourceAsStream("/webview/$name")?.bufferedReader()?.use { it.readText() }
+        val type = object : com.google.gson.reflect.TypeToken<LinkedHashMap<String, String>>() {}.type
+        val en: LinkedHashMap<String, String> = gson.fromJson(res("strings.en.json"), type) ?: LinkedHashMap()
+        val lang = java.util.Locale.getDefault().language
+        if (lang in setOf("cs", "de", "ja")) {
+            val bundle: Map<String, String> = gson.fromJson(res("bundle.$lang.json"), type) ?: emptyMap()
+            for ((k, v) in en.toMap()) en[k] = bundle[v] ?: v
+        }
+        return en
     }
 
     private fun hex(c: Color): String = "#%02x%02x%02x".format(c.red, c.green, c.blue)

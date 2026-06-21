@@ -54,6 +54,42 @@ class CostLensService : Disposable {
 
     private fun fire() = ApplicationManager.getApplication().invokeLater {
         for (l in listeners) l()
+        checkAlerts()
+    }
+
+    /** Fire a balloon at most once per month when usage crosses a configured threshold. */
+    private fun checkAlerts() {
+        val s = CostLensSettings.getInstance().data
+        val included = if (s.plan == "custom") s.includedCreditsPerMonth
+        else com.jakubjirak.copilotcostlens.pricing.PLAN_CREDITS[s.plan] ?: 1900
+        val report = com.jakubjirak.copilotcostlens.core.buildMonthReport(
+            store.events, com.jakubjirak.copilotcostlens.core.currentMonthKey(), included,
+        )
+        val props = com.intellij.ide.util.PropertiesComponent.getInstance()
+        fun onceThisMonth(key: String): Boolean {
+            val full = "ccl.alert.${report.month}.$key"
+            if (props.getBoolean(full, false)) return false
+            props.setValue(full, true)
+            return true
+        }
+        for (threshold in s.creditAlerts.filter { it > 0 }) {
+            if (report.copilotCredits >= threshold && onceThisMonth("cr$threshold")) {
+                notify("Copilot usage crossed ${"%,d".format(threshold)} AI Credits this month " +
+                    "(${"%,d".format(report.copilotCredits.toLong())} used, \$${"%.2f".format(report.copilotUsd)}).")
+            }
+        }
+        if (s.monthlyBudgetUsd > 0 && report.totalUsd >= s.monthlyBudgetUsd * s.warnAtPercent / 100.0 &&
+            onceThisMonth("budget")
+        ) {
+            notify("You have used \$${"%.2f".format(report.totalUsd)} of your \$${"%.2f".format(s.monthlyBudgetUsd)} budget this month.")
+        }
+    }
+
+    private fun notify(message: String) {
+        com.intellij.notification.NotificationGroupManager.getInstance()
+            .getNotificationGroup("Copilot Cost Lens")
+            .createNotification("Copilot Cost Lens", message, com.intellij.notification.NotificationType.WARNING)
+            .notify(null)
     }
 
     private fun scheduleAuto() {

@@ -28,7 +28,10 @@
     ]]></description>
 
     <change-notes><![CDATA[
-<ul><li><b>1.0.0</b> — Initial release: dashboard, per-repository cost tracking across Copilot Chat, Copilot CLI and Claude Code, project groups, receipts, budgets and the activity heatmap.</li></ul>
+<ul>
+  <li><b>1.13.3</b> — Full parity with the VS Code edition: export usage as CSV/JSON, AI-credit and monthly-budget alert notifications, a localized dashboard (Czech, German, Japanese), and settings for budget, credit thresholds and extra storage roots.</li>
+  <li><b>1.0.0</b> — Initial release: dashboard, per-repository cost tracking across Copilot Chat, Copilot CLI and Claude Code, project groups, receipts, budgets and the activity heatmap.</li>
+</ul>
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
@@ -49,5 +52,6 @@
             id="CopilotCostLens.StatusBar"
             implementation="com.jakubjirak.copilotcostlens.ui.CostStatusBarWidgetFactory"
             order="last"/>
+        <notificationGroup id="Copilot Cost Lens" displayType="BALLOON"/>
     </extensions>
 </idea-plugin>

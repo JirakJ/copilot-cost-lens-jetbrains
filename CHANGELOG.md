@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.13.3] — 2026-06-21
+
+Parity with the VS Code edition — everything it does, this does too.
+
+### Added
+
+- **Export usage as CSV or JSON.** New "Export CSV" / "Export JSON" actions on the dashboard write the current period's events (or all-time) to a file you pick, with proper quoting.
+- **Credit alerts & budget notifications.** Set absolute AI-credit thresholds (e.g. 2500, 5000) and/or a monthly USD budget in Settings; the plugin fires an IDE balloon at most once per month when month-to-date Copilot usage crosses one.
+- **Localized dashboard.** The dashboard now follows the IDE language for Czech, German and Japanese (English elsewhere), reusing the VS Code edition's translations.
+- **Settings for the above.** New fields for the monthly budget, comma-separated credit alerts and extra VS Code storage roots to scan.
+
 ## [1.13.2] — 2026-06-21
 
 Version aligned with the VS Code edition (no functional change since 1.4.0 — same status-bar widget and shared scan service). Both editions now share a version number.
