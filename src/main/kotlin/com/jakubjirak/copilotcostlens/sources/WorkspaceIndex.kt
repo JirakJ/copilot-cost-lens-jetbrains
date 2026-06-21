@@ -23,9 +23,26 @@ class WorkspaceIndex {
         cache.getOrPut("folder:$folderPath") { resolveFolderUncached(folderPath) }
 
     private fun resolveFolderUncached(folderPath: String): RepoRef {
-        val slug = readGitRemoteSlug(folderPath)
-        return RepoRef(name = slug ?: folderName(folderPath), folderPath = folderPath, remoteSlug = slug)
+        // Anchor to the enclosing git repository root, so a working directory that
+        // points at a sub-path (a ".git/info" cwd, a nested package folder, …) is
+        // attributed to the repository itself instead of producing a separate
+        // bucket named after the sub-folder.
+        val root = findRepoRoot(folderPath) ?: folderPath
+        val slug = readGitRemoteSlug(root)
+        return RepoRef(name = slug ?: folderName(root), folderPath = root, remoteSlug = slug)
     }
+}
+
+/** Nearest ancestor (inclusive) that holds a `.git` entry — the repo root. */
+internal fun findRepoRoot(folderPath: String): String? {
+    var dir: File? = File(folderPath)
+    var depth = 0
+    while (dir != null && depth < 40) {
+        if (File(dir, ".git").exists()) return dir.path
+        dir = dir.parentFile
+        depth++
+    }
+    return null
 }
 
 /**

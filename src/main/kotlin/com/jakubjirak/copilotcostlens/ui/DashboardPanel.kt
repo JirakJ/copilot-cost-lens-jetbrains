@@ -140,8 +140,8 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         store.updateConfig(buildStoreConfig())
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
-                store.refresh()
-                ApplicationManager.getApplication().invokeLater { if (ready) postData() }
+                // paint results as each source finishes, not only at the end
+                store.refresh { ApplicationManager.getApplication().invokeLater { if (ready) postData() } }
             } catch (e: Throwable) {
                 log.warn("Cost Lens scan failed", e)
             }

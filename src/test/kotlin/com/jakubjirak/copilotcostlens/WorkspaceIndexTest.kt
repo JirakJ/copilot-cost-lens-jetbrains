@@ -1,5 +1,6 @@
 package com.jakubjirak.copilotcostlens
 
+import com.jakubjirak.copilotcostlens.sources.findRepoRoot
 import com.jakubjirak.copilotcostlens.sources.folderName
 import com.jakubjirak.copilotcostlens.sources.parseRemoteSlug
 import com.jakubjirak.copilotcostlens.sources.readGitRemoteSlug
@@ -33,5 +34,15 @@ class WorkspaceIndexTest {
         val wt = File(repo, ".claude/worktrees/sleepy-mestorf-9e9b83").apply { mkdirs() }
         File(wt, ".git").writeText("gitdir: ${wtGitdir.absolutePath}\n")
         assertEquals("owner/repo", readGitRemoteSlug(wt.absolutePath))
+    }
+
+    @Test fun `findRepoRoot anchors sub-paths to the enclosing repo`(@TempDir tmp: Path) {
+        val repo = File(tmp.toFile(), "project")
+        File(repo, ".git/info").mkdirs()
+        File(repo, "packages/core").mkdirs()
+        assertEquals(repo.path, findRepoRoot(repo.path))
+        assertEquals(repo.path, findRepoRoot(File(repo, ".git/info").path))
+        assertEquals(repo.path, findRepoRoot(File(repo, "packages/core").path))
+        assertNull(findRepoRoot(tmp.toFile().path))
     }
 }

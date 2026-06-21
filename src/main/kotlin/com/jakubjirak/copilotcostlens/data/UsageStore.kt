@@ -55,7 +55,7 @@ class UsageStore(@Volatile private var config: StoreConfig) {
 
     fun updateConfig(newConfig: StoreConfig) { config = newConfig }
 
-    fun refresh(): List<UsageEvent> {
+    fun refresh(onProgress: (() -> Unit)? = null): List<UsageEvent> {
         val started = System.currentTimeMillis()
         val exact = mutableListOf<RawUsage>()
         val estimated = mutableListOf<RawUsage>()
@@ -63,13 +63,28 @@ class UsageStore(@Volatile private var config: StoreConfig) {
         val scannedRoots = mutableListOf<String>()
         var filesParsed = 0
         val cfg = config
+        val pricing = Pricing(cfg.priceOverrides)
 
         fun add(list: List<RawUsage>) {
             filesParsed++
             for (u in list) (if (u.estimated) estimated else exact) += u
         }
+        // publish what we have after each source so the dashboard paints the
+        // first results immediately instead of waiting for the whole scan
+        fun publish() {
+            events = toEvents(dedupeBySession(exact, estimated), pricing)
+            val providers = LinkedHashMap<String, Int>()
+            var newest = 0L
+            for (e in events) {
+                providers[e.provider.id] = (providers[e.provider.id] ?: 0) + 1
+                newest = maxOf(newest, e.timestamp)
+            }
+            stats = ScanStats(providers, newest, System.currentTimeMillis() - started, filesParsed, errors, scannedRoots)
+            onProgress?.invoke()
+        }
         fun guard(source: String, work: () -> Unit) {
             try { work() } catch (e: Exception) { errors += "$source: ${e.message}" }
+            publish()
         }
         // serve unchanged files from an mtime+size cache so periodic rescans are cheap
         fun cached(file: File, parse: () -> List<RawUsage>): List<RawUsage> {
@@ -110,16 +125,6 @@ class UsageStore(@Volatile private var config: StoreConfig) {
             for (db in findJetBrainsCopilotDbs(root)) add(cached(db.file) { parseJetBrainsCopilot(db, cfg.charsPerToken) })
         }
 
-        val merged = dedupeBySession(exact, estimated)
-        events = toEvents(merged, Pricing(cfg.priceOverrides))
-
-        val providers = LinkedHashMap<String, Int>()
-        var newest = 0L
-        for (e in events) {
-            providers[e.provider.id] = (providers[e.provider.id] ?: 0) + 1
-            newest = maxOf(newest, e.timestamp)
-        }
-        stats = ScanStats(providers, newest, System.currentTimeMillis() - started, filesParsed, errors, scannedRoots)
         return events
     }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.0] — 2026-06-13
+
+### Changed
+
+- **Faster, smoother dashboard.** Results now paint as soon as the first source is scanned and fill in progressively instead of waiting for the whole scan, with a modern loading spinner until then. The view skips re-rendering when nothing changed, so background refreshes never flicker.
+
 ## [1.2.0] — 2026-06-13
 
 ### Added
