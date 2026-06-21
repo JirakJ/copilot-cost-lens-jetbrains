@@ -44,7 +44,10 @@ class CostLensConfigurable : BoundConfigurable("Copilot Cost Lens") {
             group("Display") {
                 row { checkBox("Show month-to-date spend in the status bar").bindSelected(s::statusBarEnabled) }
             }
-            onApply { settings.mutate { s } }
+            onApply {
+                settings.mutate { s }
+                com.jakubjirak.copilotcostlens.data.CostLensService.getInstance().reconfigure()
+            }
             onReset { /* fields rebind from settings on next open */ }
             onIsModified { s != settings.data }
         }

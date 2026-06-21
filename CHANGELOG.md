@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.0] — 2026-06-21
+
+### Added
+
+- **Status-bar widget.** Month-to-date Copilot spend is now always visible in the IDE status bar; click it to open the dashboard, hover for the per-source split. Backed by a shared application service so the widget and the dashboard share one scan instead of each rescanning (also removes the rescan that happened on every tool-window open).
+
 ## [1.3.2] — 2026-06-21
 
 ### Fixed

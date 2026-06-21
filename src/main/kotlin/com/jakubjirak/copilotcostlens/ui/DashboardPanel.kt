@@ -25,8 +25,7 @@ import com.jakubjirak.copilotcostlens.core.buildGroupDetail
 import com.jakubjirak.copilotcostlens.core.buildMonthReport
 import com.jakubjirak.copilotcostlens.core.buildReceiptPdf
 import com.jakubjirak.copilotcostlens.core.buildRepoDetail
-import com.jakubjirak.copilotcostlens.data.StoreConfig
-import com.jakubjirak.copilotcostlens.data.UsageStore
+import com.jakubjirak.copilotcostlens.data.CostLensService
 import com.jakubjirak.copilotcostlens.pricing.PLAN_CREDITS
 import com.jakubjirak.copilotcostlens.settings.CostLensSettings
 import com.jakubjirak.copilotcostlens.settings.CostLensState
@@ -37,12 +36,10 @@ import java.io.File
 import javax.swing.JPanel
 import javax.swing.UIManager
 
-private const val AUTO_REFRESH_MS = 60_000
-
 class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
-    private val log = Logger.getInstance(DashboardPanel::class.java)
     private val gson: Gson = GsonBuilder().create()
-    private val store = UsageStore(buildStoreConfig())
+    private val service = CostLensService.getInstance()
+    private val store get() = service.store
     private var browser: JBCefBrowser? = null
     private var jsQuery: JBCefJSQuery? = null
 
@@ -51,23 +48,13 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private var selectedGroup: String? = null
     @Volatile private var ready = false
 
-    private val autoRefresh = com.intellij.util.Alarm(com.intellij.util.Alarm.ThreadToUse.POOLED_THREAD, this)
+    private val unsubscribe: () -> Unit
 
     init {
         if (JBCefApp.isSupported()) initBrowser() else fallback()
-        scanAsync()
-        scheduleAutoRefresh()
-    }
-
-    /**
-     * Periodically rescans in the background so users never have to click
-     * Refresh. The mtime+size file cache keeps repeat scans cheap.
-     */
-    private fun scheduleAutoRefresh() {
-        if (autoRefresh.isDisposed) return
-        autoRefresh.addRequest({
-            try { scanAsync() } finally { scheduleAutoRefresh() }
-        }, AUTO_REFRESH_MS)
+        // shared service already scans on its own; repaint when it has data
+        unsubscribe = service.addListener { ApplicationManager.getApplication().invokeLater { if (ready) postData() } }
+        service.refresh()
     }
 
     private fun fallback() {
@@ -110,18 +97,6 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private fun settings(): CostLensState = CostLensSettings.getInstance().data
 
-    private fun buildStoreConfig(): StoreConfig {
-        val s = settings()
-        return StoreConfig(
-            extraStorageRoots = s.extraStorageRoots,
-            claudeCodeEnabled = s.claudeCodeEnabled,
-            copilotCliEnabled = s.copilotCliEnabled,
-            jetbrainsCopilotEnabled = s.jetbrainsCopilotEnabled,
-            estimationEnabled = s.estimationEnabled,
-            charsPerToken = s.charsPerToken,
-        )
-    }
-
     private fun includedCredits(): Int {
         val s = settings()
         return if (s.plan == "custom") s.includedCreditsPerMonth else PLAN_CREDITS[s.plan] ?: 1900
@@ -134,19 +109,7 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         emptyMap()
     }
 
-    fun refresh() = scanAsync()
-
-    private fun scanAsync() {
-        store.updateConfig(buildStoreConfig())
-        ApplicationManager.getApplication().executeOnPooledThread {
-            try {
-                // paint results as each source finishes, not only at the end
-                store.refresh { ApplicationManager.getApplication().invokeLater { if (ready) postData() } }
-            } catch (e: Throwable) {
-                log.warn("Cost Lens scan failed", e)
-            }
-        }
-    }
+    fun refresh() = service.refresh()
 
     // --- messages from the webview --------------------------------------------
 
@@ -382,6 +345,7 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     override fun dispose() {
+        unsubscribe()
         jsQuery?.let { runCatching { Disposer.dispose(it) } }
     }
 }

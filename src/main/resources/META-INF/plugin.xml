@@ -45,5 +45,9 @@
             instance="com.jakubjirak.copilotcostlens.settings.CostLensConfigurable"
             id="com.jakubjirak.copilotcostlens.settings"
             displayName="Copilot Cost Lens"/>
+        <statusBarWidgetFactory
+            id="CopilotCostLens.StatusBar"
+            implementation="com.jakubjirak.copilotcostlens.ui.CostStatusBarWidgetFactory"
+            order="last"/>
     </extensions>
 </idea-plugin>
