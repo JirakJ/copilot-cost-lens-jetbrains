@@ -22,13 +22,15 @@ fun toCsv(events: List<UsageEvent>): String {
             e.outputTokens.toString(),
             e.cachedTokens.toString(),
             e.cacheWriteTokens.toString(),
-            "%.4f".format(e.credits),
-            "%.4f".format(creditsToUsd(e.credits)),
+            "%.4f".format(java.util.Locale.ROOT, e.credits),
+            "%.4f".format(java.util.Locale.ROOT, creditsToUsd(e.credits)),
             e.costSource.name.lowercase(),
         ).joinToString(",")
     }
     return HEADER.joinToString(",") + "\n" + rows + "\n"
 }
 
-private fun field(value: String): String =
+private fun field(value: String): String = csvField(value)
+
+internal fun csvField(value: String): String =
     if (value.any { it == '"' || it == ',' || it == '\n' }) "\"${value.replace("\"", "\"\"")}\"" else value

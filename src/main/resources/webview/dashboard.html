@@ -103,6 +103,14 @@
   td.starcell { width: 22px; color: var(--muted); cursor: pointer; user-select: none; }
   td.starcell.on { color: var(--c5); }
   td.starcell:hover { color: var(--c5); }
+  .rowact { float: right; visibility: hidden; }
+  tr:hover .rowact, tr:focus-within .rowact { visibility: visible; }
+  .rowact button { background: none; border: none; cursor: pointer; color: var(--muted); padding: 0 3px; font-size: 12px; }
+  .rowact button:hover { color: inherit; }
+  tr.clickable:focus-visible { outline: 1px solid var(--c5); outline-offset: -1px; }
+  .hiddenlink { margin-left: 10px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+  a.credit { color: var(--muted); font-size: 10px; text-decoration: none; opacity: .7; }
+  a.credit:hover { opacity: 1; text-decoration: underline; }
   .pick .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pick .val { color: var(--muted); font-variant-numeric: tabular-nums; }
   .chip {
@@ -121,6 +129,7 @@
     <button id="refresh"></button>
     <button id="exportCsv"></button>
     <button id="exportJson"></button>
+    <button id="receiptAll"></button>
     <button id="settings">⚙</button>
   </header>
   <div id="app"><div class="loader"><div class="spinner"></div></div></div>
@@ -134,22 +143,26 @@
   const monthSel = document.getElementById('month');
   const PALETTE = ['var(--c1)','var(--c2)','var(--c3)','var(--c4)','var(--c5)','var(--c6)'];
   const ALLOWANCE_PRESETS = [1900, 3900, 10000, 100000, 1000000];
-  const PROVIDER_NAMES = { 'copilot': S.providerCopilot, 'copilot-cli': S.providerCopilotCli, 'claude-code': S.providerClaudeCode };
+  const PROVIDER_NAMES = { 'copilot': S.providerCopilot, 'copilot-cli': S.providerCopilotCli, 'claude-code': S.providerClaudeCode, 'codex': S.providerCodex };
 
   document.getElementById('refresh').textContent = '⟳ ' + S.refresh;
   document.getElementById('refresh').title = S.refreshTitle;
   document.getElementById('exportCsv').textContent = S.exportCsv;
   document.getElementById('exportJson').textContent = S.exportJson;
+  document.getElementById('receiptAll').textContent = '🧾 ' + S.receiptPdf;
+  document.getElementById('receiptAll').title = S.receiptAllTitle;
   document.getElementById('settings').title = S.settingsTitle;
 
   document.getElementById('refresh').onclick = () => vscode.postMessage({ type: 'refresh' });
   document.getElementById('exportCsv').onclick = () => vscode.postMessage({ type: 'export', format: 'csv' });
   document.getElementById('exportJson').onclick = () => vscode.postMessage({ type: 'export', format: 'json' });
+  document.getElementById('receiptAll').onclick = () => vscode.postMessage({ type: 'exportReceipt', all: true });
   document.getElementById('settings').onclick = () => vscode.postMessage({ type: 'openSettings' });
   monthSel.onchange = () => vscode.postMessage({ type: 'selectMonth', month: monthSel.value });
 
   let lastMsg = null;
   let editor = null; // { originalName, name, members:Set, deletable }
+  let manageHiddenOpen = false;
   let repoFilter = '';
   let repoProvider = null;
   let repoSort = { key: 'credits', dir: -1 };
@@ -160,11 +173,12 @@
     const msg = event.data;
     if (msg.type === 'data') {
       lastMsg = msg;
-      if (editor) {
-        return; // keep the project editor open; fresh data renders after save/cancel
+      if (editor || manageHiddenOpen) {
+        return; // keep the open editor view; fresh data renders after save/cancel
       }
+      if (msg.currency) CUR = msg.currency;
       // skip the rebuild when nothing changed → no flicker on idle auto-refresh
-      const key = JSON.stringify([msg.selectedMonth, msg.report, msg.detail, msg.groupDetail, msg.starred, msg.groupsConfig]);
+      const key = JSON.stringify([msg.selectedMonth, msg.report, msg.detail, msg.groupDetail, msg.starred, msg.groupsConfig, msg.currency, msg.hiddenCount]);
       if (key === lastRenderKey) return;
       lastRenderKey = key;
       // same view (just refreshed data) → keep scroll; navigation → back to top
@@ -177,14 +191,15 @@
   });
   vscode.postMessage({ type: 'ready' });
 
-  const usd = (v) => '$' + v.toFixed(2);
+  let CUR = { code: 'USD', rate: 1 };
+  const usd = (v) => CUR.code === 'USD' ? '$' + v.toFixed(2) : (v * CUR.rate).toFixed(2) + ' ' + CUR.code;
   const cr = (v) => v >= 100 ? Math.round(v).toLocaleString() : v.toFixed(1);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const tok = (v) => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(1)+'k' : String(v);
   // effective blended price actually paid per 1M tokens (cache effects included)
   const effRate = (m) => {
     const total = (m.inputTokens || 0) + (m.outputTokens || 0) + (m.cachedTokens || 0) + (m.cacheWriteTokens || 0);
-    return total > 0 ? '$' + ((m.usd / total) * 1e6).toFixed(2) : '—';
+    return total > 0 ? usd((m.usd / total) * 1e6) : '—';
   };
   const tpl = (s, ...args) => s.replace(/\{(\d+)\}/g, (_, i) => args[+i] ?? '');
 
@@ -227,10 +242,14 @@
         (dataElsewhere
           ? '<p>' + esc(tpl(S.emptyOtherPeriod, periodName(selectedMonth))) + '</p>' +
             '<button id="viewAll" class="primary">' + esc(S.viewAllTime) + '</button>'
-          : '<p>' + esc(S.emptyTitle) + '</p><p>' + esc(S.emptyHint) + '</p>') +
+          : '<p>' + esc(S.emptyTitle) + '</p><p>' + esc(S.emptyHint) + '</p>' +
+            '<button id="addRoot">📁 ' + esc(S.addRoot) + '</button>') +
+        todayBadge(r, selectedMonth) +
         '</div>';
       const viewAll = document.getElementById('viewAll');
       if (viewAll) viewAll.onclick = () => vscode.postMessage({ type: 'selectMonth', month: 'all' });
+      const addRoot = document.getElementById('addRoot');
+      if (addRoot) addRoot.onclick = () => vscode.postMessage({ type: 'addStorageRoot' });
       foot.innerHTML = '';
       return;
     }
@@ -268,7 +287,11 @@
       starredCard(r) +
       '<div class="card"><div class="cardhead"><h2>' + esc(S.repositories) + '</h2>' +
         '<div style="display:flex;gap:8px;align-items:center">' + providerChips(r) +
-        '<input id="repoFilter" class="textinput" style="max-width:230px" placeholder="' + esc(S.filterRepos) + '"></div></div>' +
+        '<input id="repoFilter" class="textinput" style="max-width:230px" placeholder="' + esc(S.filterRepos) + '">' +
+        (lastMsg && lastMsg.hiddenCount > 0
+          ? '<a href="#" id="manageHidden" class="hiddenlink">' + esc(S.hiddenManage.replace('{0}', lastMsg.hiddenCount)) + '</a>'
+          : '') +
+        '</div></div>' +
         repoTableDynamic() + '<div class="hint">' + esc(S.detailHint) + '</div></div>';
 
     bindAllowance();
@@ -329,6 +352,8 @@
         '<h2>' + esc(s.repo.name) + (s.hasEstimates ? '<span class="badge">~est</span>' : '') + '</h2>' +
         '<button id="receipt">🧾 ' + esc(S.receiptPdf) + '</button>' +
         (s.repo.folderPath ? '<button id="openRepo">📂 ' + esc(S.openFolder) + '</button>' : '') +
+        '<button id="renameRepo" title="' + esc(S.renameRepoTitle) + '">✎ ' + esc(S.renameRepo) + '</button>' +
+        '<button id="hideRepo" title="' + esc(S.hideRepoTitle) + '">🙈 ' + esc(S.hideRepo) + '</button>' +
       '</div>' +
       '<div class="grid kpis">' +
         kpi(S.spend + ' · ' + periodLabel, usd(s.usd), cr(s.credits) + ' ' + S.aiCredits) +
@@ -358,6 +383,8 @@
     document.getElementById('receipt').onclick = () => vscode.postMessage({ type: 'exportReceipt', repo: s.repo.name });
     const openBtn = document.getElementById('openRepo');
     if (openBtn) openBtn.onclick = () => vscode.postMessage({ type: 'openRepo', path: s.repo.folderPath });
+    document.getElementById('renameRepo').onclick = () => vscode.postMessage({ type: 'renameRepo', repo: s.repo.name });
+    document.getElementById('hideRepo').onclick = () => vscode.postMessage({ type: 'toggleHidden', repo: s.repo.name });
     foot.innerHTML = esc(S.footSources);
   }
 
@@ -431,12 +458,7 @@
 
   function renderEditor() {
     // repos already claimed by another project are not offered again
-    const assignedElsewhere = new Set();
-    const groupsConfig = (lastMsg && lastMsg.groupsConfig) || {};
-    for (const [gname, members] of Object.entries(groupsConfig)) {
-      if (gname === editor.originalName) continue;
-      for (const m of members) assignedElsewhere.add(String(m).toLowerCase());
-    }
+    const assignedElsewhere = projectRepoSet(editor.originalName);
     const allRepos = ((lastMsg && lastMsg.allRepos) || []).filter(
       (r) => !assignedElsewhere.has(r.name.toLowerCase()) || editor.members.has(r.name));
     const rows = allRepos.map((r) =>
@@ -492,16 +514,69 @@
     nameInput.focus();
   }
 
+  function keyable(row) {
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.onclick(); }
+    };
+  }
+
   function bindRepoRows() {
     for (const row of document.querySelectorAll('tr.clickable[data-repo]')) {
       row.onclick = () => vscode.postMessage({ type: 'selectRepo', repo: row.dataset.repo });
+      keyable(row);
     }
+    for (const btn of document.querySelectorAll('.rowact button')) {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        vscode.postMessage({
+          type: btn.classList.contains('act-rename') ? 'renameRepo' : 'toggleHidden',
+          repo: btn.dataset.repo,
+        });
+      };
+    }
+    const hiddenLink = document.getElementById('manageHidden');
+    if (hiddenLink) hiddenLink.onclick = (e) => { e.preventDefault(); openManageHidden(); };
   }
 
   function bindGroupRows() {
     for (const row of document.querySelectorAll('tr.clickable[data-group]')) {
       row.onclick = () => vscode.postMessage({ type: 'selectGroup', group: row.dataset.group });
+      keyable(row);
     }
+  }
+
+  // ---- manage hidden repositories (checked entries stay hidden) ---------
+
+  function openManageHidden() {
+    manageHiddenOpen = true;
+    const hidden = (lastMsg && lastMsg.hiddenRepos) || [];
+    const rows = hidden.map((name) =>
+      '<label class="pick"><input type="checkbox" data-repo="' + esc(name) + '" checked> ' +
+      '<span class="name">' + esc(name) + '</span></label>').join('');
+    app.innerHTML =
+      '<div class="detailbar">' +
+        '<button id="cancelTop">← ' + esc(S.cancel) + '</button>' +
+        '<h2>🙈 ' + esc(S.manageHiddenTitle) + '</h2>' +
+      '</div>' +
+      '<div class="card" style="max-width:640px">' +
+        '<div class="picklist">' + rows + '</div>' +
+        '<div style="display:flex;gap:8px;margin-top:10px">' +
+          '<button id="saveHidden" class="primary">💾 ' + esc(S.save) + '</button>' +
+          '<button id="cancelHidden">' + esc(S.cancel) + '</button>' +
+        '</div>' +
+      '</div>';
+    foot.innerHTML = '';
+    const close = () => { manageHiddenOpen = false; if (lastMsg) render(lastMsg); };
+    document.getElementById('cancelTop').onclick = close;
+    document.getElementById('cancelHidden').onclick = close;
+    document.getElementById('saveHidden').onclick = () => {
+      const kept = [...document.querySelectorAll('.picklist input[type=checkbox]')]
+        .filter((box) => box.checked).map((box) => box.dataset.repo);
+      manageHiddenOpen = false;
+      vscode.postMessage({ type: 'setHidden', repos: kept });
+    };
   }
 
   function groupTable(r) {
@@ -545,7 +620,19 @@
     }
     return '<div class="card"><div class="label">' + esc(S.spend + ' · ' + periodLabel) + '</div>' +
       '<div class="value">' + esc(usd(r.totalUsd)) + trend + '</div>' +
+      todayBadge(r, selectedMonth) +
       '<div class="sub">' + esc(providerSplit || (cr(r.totalCredits) + ' ' + S.aiCredits)) + '</div></div>';
+  }
+
+  // Today's running spend + tokens. Shown on the current month and all-time only.
+  function todayBadge(r, selectedMonth) {
+    const now = new Date();
+    const todayKey = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    if (selectedMonth !== 'all' && selectedMonth !== todayKey.slice(0, 7)) return '';
+    const todayDays = ((r && r.days) || []).filter((d) => d.day === todayKey);
+    const todayUsd = todayDays.reduce((s, d) => s + d.usd, 0);
+    const todayTokens = todayDays.reduce((s, d) => s + (d.tokens || 0), 0);
+    return '<div class="sub"><b>' + esc(S.today + ': ' + usd(todayUsd) + ' · ' + tok(todayTokens) + ' ' + S.tokens) + '</b></div>';
   }
 
   function kpiGauge(r, pct, over, selectedMonth) {
@@ -654,6 +741,19 @@
     return new Set(((lastMsg && lastMsg.starred) || []).map((s) => String(s).toLowerCase()));
   }
 
+  // Repo names (lowercased) claimed by a project. A repo belongs to at most one
+  // project, so these are hidden from the Repositories table — they're counted
+  // under their project instead. Pass exceptGroup to ignore one group's members.
+  function projectRepoSet(exceptGroup) {
+    const set = new Set();
+    const cfg = (lastMsg && lastMsg.groupsConfig) || {};
+    for (const [gname, members] of Object.entries(cfg)) {
+      if (gname === exceptGroup) continue;
+      for (const m of members) set.add(String(m).toLowerCase());
+    }
+    return set;
+  }
+
   function starredCard(r) {
     const starred = starredSet();
     if (starred.size === 0) return '';
@@ -683,7 +783,11 @@
       const isStar = starred.has(repo.repo.name.toLowerCase());
       return '<tr class="clickable" data-repo="' + esc(repo.repo.name) + '">' +
         '<td class="starcell' + (isStar ? ' on' : '') + '" data-star="' + esc(repo.repo.name) + '" title="' + esc(S.starToggle) + '">' + (isStar ? '★' : '☆') + '</td>' +
-        '<td>' + esc(repo.repo.name) + (repo.hasEstimates ? '<span class="badge">~est</span>' : '') + '</td>' +
+        '<td>' + esc(repo.repo.name) + (repo.hasEstimates ? '<span class="badge">~est</span>' : '') +
+          '<span class="rowact">' +
+          '<button class="act-rename" data-repo="' + esc(repo.repo.name) + '" title="' + esc(S.renameRepoTitle) + '">✎</button>' +
+          '<button class="act-hide" data-repo="' + esc(repo.repo.name) + '" title="' + esc(S.hideRepoTitle) + '">🙈</button>' +
+          '</span></td>' +
         '<td class="models" title="' + esc(models.map((m) => m.model + ' (' + m.requestCount + '×)').join(', ')) + '">' + shown + more + '</td>' +
         '<td class="num">' + repo.requestCount + '</td>' +
         '<td class="num">' + repo.sessionCount + '</td>' +
@@ -740,6 +844,9 @@
     const r = lastMsg.report;
     const needle = repoFilter.trim().toLowerCase();
     let list = r.repos;
+    // repos assigned to a project are shown under their project, not here
+    const assigned = projectRepoSet();
+    if (assigned.size) list = list.filter((repo) => !assigned.has(repo.repo.name.toLowerCase()));
     if (repoProvider) {
       list = list.filter((repo) => (repo.providers || []).includes(repoProvider));
     }
@@ -760,7 +867,7 @@
 
   function providerChips(r) {
     const present = [...new Set((r.repos || []).flatMap((x) => x.providers || []))];
-    const order = ['copilot', 'copilot-cli', 'claude-code'];
+    const order = ['copilot', 'copilot-cli', 'claude-code', 'codex'];
     return present.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((p) =>
       '<span class="chip' + (repoProvider === p ? ' on' : '') + '" data-provider="' + p + '">' +
       esc(PROVIDER_NAMES[p] || p) + '</span>').join('');
@@ -782,7 +889,7 @@
       const t = d.usd / max;
       const fill = d.usd <= 0 ? 'rgba(128,128,128,0.12)'
         : 'color-mix(in srgb, var(--c1) ' + Math.round(25 + t * 75) + '%, transparent)';
-      svg += '<rect x="' + x + '" y="' + y + '" width="' + cell + '" height="' + cell + '" rx="2.5" fill="' + fill + '"><title>' + d.day + ': $' + d.usd.toFixed(2) + '</title></rect>';
+      svg += '<rect x="' + x + '" y="' + y + '" width="' + cell + '" height="' + cell + '" rx="2.5" fill="' + fill + '"><title>' + d.day + ': $' + d.usd.toFixed(2) + ' · ' + tok(d.tokens || 0) + ' ' + S.tokens + '</title></rect>';
       const mon = d.day.slice(0, 7);
       if (row === 0 && mon !== lastMonth) { lastMonth = mon; svg += '<text x="' + x + '" y="10">' + (+d.day.slice(5, 7)) + '/' + d.day.slice(2, 4) + '</text>'; }
     });

@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:CostLensService.kt$k.isNotBlank() &amp;&amp; budget != null &amp;&amp; budget.isFinite() &amp;&amp; budget > 0</ID>
+    <ID>CyclomaticComplexMethod:DashboardPanel.kt$DashboardPanel$private fun exportReceipt(msg: JsonObject)</ID>
+    <ID>CyclomaticComplexMethod:DashboardPanel.kt$DashboardPanel$private fun handleMessage(raw: String)</ID>
+    <ID>CyclomaticComplexMethod:Sources.kt$fun parseCodexUsage(file: File): List&lt;RawUsage></ID>
+    <ID>CyclomaticComplexMethod:Sources.kt$fun parseCopilotCli(file: File, sessionId: String, charsPerToken: Int): List&lt;RawUsage></ID>
+    <ID>CyclomaticComplexMethod:Sources.kt$fun parseVsCodeJsonl(file: File, sessionId: String, storageDir: File): List&lt;RawUsage></ID>
+    <ID>CyclomaticComplexMethod:Sources.kt$private fun parseOneChatFormat(file: File, storageDir: File, charsPerToken: Int): List&lt;RawUsage></ID>
+    <ID>CyclomaticComplexMethod:UsageStore.kt$UsageStore$fun refresh(onProgress: (() -> Unit)? = null): List&lt;UsageEvent></ID>
+    <ID>LongMethod:CostLensConfigurable.kt$CostLensConfigurable$override fun createPanel(): DialogPanel</ID>
+    <ID>LongMethod:Sources.kt$fun parseCopilotCli(file: File, sessionId: String, charsPerToken: Int): List&lt;RawUsage></ID>
+    <ID>LongParameterList:AggregateTest.kt$AggregateTest$( repo: String = "owner/alpha", credits: Double = 10.0, provider: Provider = Provider.COPILOT, timestamp: Long = ts(2026, 6, 10), model: String = "gpt-5.5", session: String = "s", estimated: Boolean = false, )</ID>
+    <ID>LongParameterList:PricingTest.kt$PricingTest$( model: String = "gpt-5.5", input: Long = 0, output: Long = 0, cached: Long = 0, cacheWrite: Long = 0, nano: Long? = null, premium: Double? = null, estimated: Boolean = false, )</ID>
+    <ID>LoopWithTooManyJumpStatements:CostLensService.kt$CostLensService$for</ID>
+    <ID>LoopWithTooManyJumpStatements:Sources.kt$for</ID>
+    <ID>LoopWithTooManyJumpStatements:WorkspaceIndex.kt$for</ID>
+    <ID>MaxLineLength:CsvTest.kt$CsvTest$assertEquals("timestamp,provider,repo,model,sessionId,inputTokens,outputTokens,cachedTokens,cacheWriteTokens,credits,usd,costSource", lines[0])</ID>
+    <ID>MaxLineLength:DashboardPanel.kt$DashboardPanel$Triple(g.models.map { m -> ReceiptModelLine(m.model, m.requestCount, m.credits, m.usd, m.inputTokens, m.outputTokens, m.cachedTokens, m.cacheWriteTokens) }, listOf(g.inputTokens, g.outputTokens, g.cachedTokens, g.cacheWriteTokens, g.sessionCount.toLong()), Triple(g.credits, g.usd, g.hasEstimates))</ID>
+    <ID>MaxLineLength:DashboardPanel.kt$DashboardPanel$receiptFrom</ID>
+    <ID>MaxLineLength:ReceiptPdf.kt$objects += "&lt;&lt; /Type /Page /Parent 2 0 R /MediaBox [0 0 $PAGE_W $pageH] /Resources &lt;&lt; /Font &lt;&lt; /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>" to null</ID>
+    <ID>NestedBlockDepth:JetBrainsSource.kt$fun findJetBrainsCopilotDbs(root: File): List&lt;JetBrainsDb></ID>
+    <ID>TooManyFunctions:Aggregate.kt$com.jakubjirak.copilotcostlens.core.Aggregate.kt</ID>
+    <ID>TooManyFunctions:DashboardPanel.kt$DashboardPanel : JPanelDisposable</ID>
+    <ID>TooManyFunctions:Sources.kt$com.jakubjirak.copilotcostlens.sources.Sources.kt</ID>
+  </CurrentIssues>
+</SmellBaseline>

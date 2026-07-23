@@ -53,6 +53,24 @@ class AggregateTest {
         assertEquals(100.0, r.copilotCredits, 1e-9)
     }
 
+    @Test fun `codex excluded from allowance but counted in totals`() {
+        val events = listOf(
+            ev(credits = 100.0, provider = Provider.COPILOT),
+            ev(credits = 40.0, provider = Provider.COPILOT_CLI, session = "s2"),
+            ev(credits = 500.0, provider = Provider.CODEX, session = "s3"),
+        )
+        val r = buildMonthReport(events, "2026-06", 1900, now = now)
+        assertEquals(640.0, r.totalCredits, 1e-9)
+        assertEquals(140.0, r.copilotCredits, 1e-9)
+    }
+
+    @Test fun `day points accumulate tokens`() {
+        val events = listOf(ev(credits = 1.0), ev(credits = 2.0, session = "s2"))
+        val r = buildMonthReport(events, "2026-06", 0, now = now)
+        assertEquals(1, r.days.size)
+        assertEquals(2 * (1000L + 200L), r.days[0].tokens) // input + output per event
+    }
+
     @Test fun `all-time disables allowance and forecast`() {
         val events = listOf(ev(credits = 10.0, timestamp = ts(2025, 10, 1)), ev(credits = 20.0))
         val r = buildMonthReport(events, ALL_TIME, 1900, now = now)

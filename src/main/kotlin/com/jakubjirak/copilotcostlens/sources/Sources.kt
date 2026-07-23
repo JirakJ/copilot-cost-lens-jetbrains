@@ -1,5 +1,11 @@
 package com.jakubjirak.copilotcostlens.sources
 
+import com.google.gson.JsonArray
+import com.google.gson.JsonElement
+import com.google.gson.JsonNull
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.google.gson.JsonPrimitive
 import com.jakubjirak.copilotcostlens.model.Provider
 import com.jakubjirak.copilotcostlens.model.RawUsage
 import java.io.File
@@ -64,14 +70,38 @@ fun parseVsCodeJsonl(file: File, sessionId: String, storageDir: File): List<RawU
     return out
 }
 
-fun findChatSessions(storageDir: File): List<File> =
-    File(storageDir, "chatSessions").listFiles { f -> f.name.endsWith(".json") }?.toList() ?: emptyList()
+/**
+ * VS Code stores chat sessions either as flat JSON or, since 1.128
+ * (`chat.useLogSessionStorage`), as append-only mutation logs
+ * (`chatSessions/<sessionId>.jsonl`). When both formats exist for one
+ * session id, only the `.jsonl` is listed.
+ */
+fun findChatSessions(storageDir: File): List<File> {
+    val entries = File(storageDir, "chatSessions").listFiles()?.toList() ?: return emptyList()
+    val logSessions = entries.filter { it.name.endsWith(".jsonl") }
+        .mapTo(HashSet()) { it.name.removeSuffix(".jsonl") }
+    return entries.filter { f ->
+        f.name.endsWith(".jsonl") || (f.name.endsWith(".json") && f.name.removeSuffix(".json") !in logSessions)
+    }
+}
 
 fun parseChatSession(file: File, storageDir: File, charsPerToken: Int): List<RawUsage> {
-    val root = runCatching { com.google.gson.JsonParser.parseString(file.readText()).asJsonObject }.getOrNull()
-        ?: return emptyList()
+    val usages = parseOneChatFormat(file, storageDir, charsPerToken)
+    if (usages.isNotEmpty() || !file.name.endsWith(".jsonl")) return usages
+    // Empty/corrupt/stale .jsonl (crash-truncated migration, downgrade) — fall
+    // back to the sibling flat .json it shadowed in findChatSessions. No
+    // double-count risk: the .jsonl contributed zero records.
+    return parseOneChatFormat(File(file.parentFile, file.name.removeSuffix(".jsonl") + ".json"), storageDir, charsPerToken)
+}
+
+private fun parseOneChatFormat(file: File, storageDir: File, charsPerToken: Int): List<RawUsage> {
+    if (!file.isFile) return emptyList()
+    val root = runCatching {
+        if (file.name.endsWith(".jsonl")) replaySessionLog(file.readText())
+        else JsonParser.parseString(file.readText()).takeIf { it.isJsonObject }?.asJsonObject
+    }.getOrNull() ?: return emptyList()
     val requests = if (root.has("requests") && root.get("requests").isJsonArray) root.getAsJsonArray("requests") else return emptyList()
-    val sessionId = root.str("sessionId") ?: file.name.removeSuffix(".json")
+    val sessionId = root.str("sessionId") ?: file.name.removeSuffix(".jsonl").removeSuffix(".json")
     val fallbackTs = root.num("lastMessageDate") ?: root.num("creationDate") ?: System.currentTimeMillis()
     val out = mutableListOf<RawUsage>()
     for (el in requests) {
@@ -79,6 +109,30 @@ fun parseChatSession(file: File, storageDir: File, charsPerToken: Int): List<Raw
         val req = el.asJsonObject
         val model = req.str("modelId") ?: "unknown"
         val ts = req.num("timestamp") ?: fallbackTs
+
+        // Log-store sessions carry exact per-request usage — prefer it. Records
+        // stay `estimated` so exact GitHub.copilot-chat transcripts for the
+        // same session still supersede them instead of double counting.
+        val exactInput = req.num("promptTokens") ?: 0
+        val exactOutput = req.num("completionTokens") ?: 0
+        val credits = req.dbl("copilotCredits") ?: 0.0
+        if (exactInput > 0 || exactOutput > 0 || credits > 0) {
+            out += RawUsage(
+                sessionId = sessionId,
+                provider = Provider.COPILOT,
+                workspaceStorageDir = storageDir.absolutePath,
+                timestamp = ts,
+                model = model,
+                inputTokens = exactInput,
+                outputTokens = exactOutput,
+                cachedTokens = 0,
+                cacheWriteTokens = 0,
+                nanoCredits = if (credits > 0) Math.round(credits * 1_000_000_000) else null,
+                estimated = true,
+            )
+            continue
+        }
+
         val promptChars = totalTextLength(req.get("message"))
         val resultMeta = req.obj("result")?.get("metadata")
         val responseChars = totalTextLength(req.get("response")) + totalTextLength(resultMeta)
@@ -97,6 +151,83 @@ fun parseChatSession(file: File, storageDir: File, charsPerToken: Int): List<Raw
         )
     }
     return out
+}
+
+/**
+ * Replays a chat-session mutation log into its final state. Line format
+ * (upstream objectMutationLog.ts): {kind:0,v} initial, {kind:1,k,v} set,
+ * {kind:2,k,v?,i?} array push (truncate to `i` first), {kind:3,k} delete.
+ * Malformed lines and failed operations are skipped.
+ */
+internal fun replaySessionLog(content: String): JsonObject? {
+    var state: JsonElement? = null
+    for (line in content.lineSequence()) {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty()) continue
+        val entry = runCatching { JsonParser.parseString(trimmed) }.getOrNull()
+            ?.takeIf { it.isJsonObject }?.asJsonObject ?: continue
+        runCatching {
+            when (entry.num("kind")) {
+                0L -> state = entry.get("v")
+                1L -> applyLogSet(state, logPath(entry), entry.get("v"))
+                2L -> applyLogPush(state, logPath(entry), entry.get("v"), entry.num("i"))
+                3L -> applyLogSet(state, logPath(entry), null)
+                else -> Unit
+            }
+        }
+    }
+    return state?.takeIf { it.isJsonObject }?.asJsonObject
+}
+
+private fun logPath(entry: JsonObject): List<JsonPrimitive> =
+    entry.get("k")?.takeIf { it.isJsonArray }?.asJsonArray
+        ?.filter { it.isJsonPrimitive }?.map { it.asJsonPrimitive } ?: emptyList()
+
+private fun logChild(parent: JsonElement?, key: JsonPrimitive): JsonElement? = when {
+    parent == null -> null
+    parent.isJsonObject -> parent.asJsonObject.get(key.asString)
+    parent.isJsonArray && key.isNumber -> parent.asJsonArray.let { arr ->
+        val i = key.asInt
+        if (i in 0 until arr.size()) arr.get(i) else null
+    }
+    else -> null
+}
+
+private fun logWalkToParent(state: JsonElement?, keys: List<JsonPrimitive>): JsonElement? {
+    var current = state
+    for (i in 0 until keys.size - 1) current = logChild(current, keys[i])
+    return current?.takeIf { it.isJsonObject || it.isJsonArray }
+}
+
+private fun applyLogSet(state: JsonElement?, keys: List<JsonPrimitive>, value: JsonElement?) {
+    if (keys.isEmpty()) return
+    val parent = logWalkToParent(state, keys) ?: return
+    val key = keys.last()
+    if (parent.isJsonObject) {
+        if (value == null) parent.asJsonObject.remove(key.asString) else parent.asJsonObject.add(key.asString, value)
+    } else if (parent.isJsonArray && key.isNumber) {
+        // arrays only ever take numeric indices; out-of-range sets are dropped
+        val arr = parent.asJsonArray
+        val i = key.asInt
+        when {
+            i in 0 until arr.size() -> arr.set(i, value ?: JsonNull.INSTANCE)
+            i == arr.size() && value != null -> arr.add(value)
+        }
+    }
+}
+
+private fun applyLogPush(state: JsonElement?, keys: List<JsonPrimitive>, values: JsonElement?, startIndex: Long?) {
+    if (keys.isEmpty()) return
+    val parent = logWalkToParent(state, keys) ?: return
+    val key = keys.last()
+    val existing = logChild(parent, key)
+    val arr = if (existing != null && existing.isJsonArray) existing.asJsonArray else JsonArray()
+    // upstream only writes i <= arr.size (truncation) — clamp corrupt indices
+    if (startIndex != null && startIndex >= 0 && startIndex < arr.size()) {
+        while (arr.size() > startIndex) arr.remove(arr.size() - 1)
+    }
+    if (values != null && values.isJsonArray) values.asJsonArray.forEach { arr.add(it) }
+    if (existing !== arr) applyLogSet(state, keys, arr)
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +298,7 @@ fun parseCopilotCli(file: File, sessionId: String, charsPerToken: Int): List<Raw
 
     forEachJsonLine(file) { record ->
         val type = record.str("type") ?: ""
-        val data = record.obj("data") ?: com.google.gson.JsonObject()
+        val data = record.obj("data") ?: JsonObject()
         val ts = parseTimestamp(record.str("timestamp"))
         if (ts != null) lastTs = max(lastTs, ts)
 
@@ -238,4 +369,62 @@ fun parseCopilotCli(file: File, sessionId: String, charsPerToken: Int): List<Raw
             estimated = true,
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// ChatGPT Codex — exact token usage from ~/.codex/sessions rollout logs
+// ---------------------------------------------------------------------------
+
+fun findCodexFiles(root: File): List<File> {
+    val files = mutableListOf<File>()
+    fun walk(dir: File) {
+        dir.listFiles()?.forEach { entry ->
+            if (entry.isDirectory) walk(entry)
+            else if (entry.isFile && entry.name.endsWith(".jsonl")) files += entry
+        }
+    }
+    walk(root)
+    return files
+}
+
+fun parseCodexUsage(file: File): List<RawUsage> {
+    val out = mutableListOf<RawUsage>()
+    var sessionId = file.name.removeSuffix(".jsonl")
+    var folderPath: String? = null
+    var model = "unknown"
+
+    forEachJsonLine(file) { record ->
+        val payload = record.obj("payload") ?: JsonObject()
+        when (record.str("type")) {
+            "session_meta" -> {
+                sessionId = payload.str("session_id") ?: payload.str("id") ?: sessionId
+                folderPath = payload.str("cwd") ?: folderPath
+            }
+            "turn_context" -> {
+                model = payload.str("model") ?: model
+                folderPath = payload.str("cwd") ?: folderPath
+            }
+            "event_msg" -> {
+                if (payload.str("type") != "token_count") return@forEachJsonLine
+                val last = payload.obj("info")?.obj("last_token_usage") ?: return@forEachJsonLine
+                val input = max(0, last.num("input_tokens") ?: 0)
+                val cached = minOf(input, max(0, last.num("cached_input_tokens") ?: 0))
+                val output = max(0, last.num("output_tokens") ?: 0)
+                if (input == 0L && output == 0L) return@forEachJsonLine
+                out += RawUsage(
+                    sessionId = sessionId,
+                    provider = Provider.CODEX,
+                    folderPath = folderPath,
+                    timestamp = parseTimestamp(record.str("timestamp")) ?: System.currentTimeMillis(),
+                    model = model,
+                    inputTokens = input - cached,
+                    outputTokens = output,
+                    cachedTokens = cached,
+                    cacheWriteTokens = 0,
+                    estimated = false,
+                )
+            }
+        }
+    }
+    return out
 }

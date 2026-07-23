@@ -7,7 +7,10 @@ import com.jakubjirak.copilotcostlens.pricing.Pricing
 import com.jakubjirak.copilotcostlens.pricing.normalizeModelId
 import com.jakubjirak.copilotcostlens.sources.WorkspaceIndex
 import com.jakubjirak.copilotcostlens.sources.defaultClaudeCodeRoot
+import com.jakubjirak.copilotcostlens.sources.defaultCodexRoot
 import com.jakubjirak.copilotcostlens.sources.defaultCopilotCliRoot
+import com.jakubjirak.copilotcostlens.sources.findCodexFiles
+import com.jakubjirak.copilotcostlens.sources.parseCodexUsage
 import com.jakubjirak.copilotcostlens.sources.detectStorageRoots
 import com.jakubjirak.copilotcostlens.sources.findChatSessions
 import com.jakubjirak.copilotcostlens.sources.findClaudeCodeFiles
@@ -25,8 +28,11 @@ import com.jakubjirak.copilotcostlens.sources.parseVsCodeJsonl
 
 data class StoreConfig(
     val extraStorageRoots: List<String> = emptyList(),
+    /** Map of resolved repo name → user-chosen display name. */
+    val repoAliases: Map<String, String> = emptyMap(),
     val claudeCodeEnabled: Boolean = true,
     val copilotCliEnabled: Boolean = true,
+    val codexEnabled: Boolean = true,
     val jetbrainsCopilotEnabled: Boolean = false,
     val estimationEnabled: Boolean = true,
     val charsPerToken: Int = 4,
@@ -121,6 +127,11 @@ class UsageStore(@Volatile private var config: StoreConfig) {
             scannedRoots += root.absolutePath
             for ((file, sid) in findCopilotCliFiles(root)) add(cached(file) { parseCopilotCli(file, sid, cfg.charsPerToken) })
         }
+        if (cfg.codexEnabled) guard("codex") {
+            val root = defaultCodexRoot()
+            scannedRoots += root.absolutePath
+            for (file in findCodexFiles(root)) add(cached(file) { parseCodexUsage(file) })
+        }
         if (cfg.jetbrainsCopilotEnabled) guard("copilot-jetbrains") {
             val root = defaultJetBrainsCopilotRoot()
             scannedRoots += root.absolutePath
@@ -150,7 +161,13 @@ class UsageStore(@Volatile private var config: StoreConfig) {
             )
         }.sortedBy { it.timestamp }
 
-    private fun resolveRepo(u: RawUsage): RepoRef = when {
+    private fun resolveRepo(u: RawUsage): RepoRef {
+        val base = baseRepo(u)
+        val alias = config.repoAliases[base.name]
+        return if (alias != null) base.copy(name = alias) else base
+    }
+
+    private fun baseRepo(u: RawUsage): RepoRef = when {
         u.repoSlug != null -> RepoRef(u.repoSlug, u.folderPath, u.repoSlug)
         u.folderPath != null -> workspaceIndex.resolveFolder(u.folderPath)
         u.workspaceStorageDir != null -> workspaceIndex.resolveStorage(java.io.File(u.workspaceStorageDir))

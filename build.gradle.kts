@@ -70,7 +70,9 @@ intellijPlatform {
 
     pluginVerification {
         ides {
-            recommended()
+            // pinned: recommended() resolves releases with no downloadable artifact (2025.3)
+            ide(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdeaCommunity, "2024.3")
+            ide(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdeaCommunity, "2025.2")
         }
     }
 }
@@ -88,4 +90,6 @@ tasks {
 detekt {
     config.setFrom(files("detekt.yml"))
     buildUponDefaultConfig = true
+    // pre-1.22.3 issues, frozen; new code must stay clean (regenerate: ./gradlew detektBaseline)
+    baseline = file("detekt-baseline.xml")
 }

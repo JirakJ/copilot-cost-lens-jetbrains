@@ -4,6 +4,7 @@ import com.jakubjirak.copilotcostlens.sources.findRepoRoot
 import com.jakubjirak.copilotcostlens.sources.folderName
 import com.jakubjirak.copilotcostlens.sources.parseRemoteSlug
 import com.jakubjirak.copilotcostlens.sources.readGitRemoteSlug
+import com.jakubjirak.copilotcostlens.sources.remoteRefFromWorkspaceUri
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -16,6 +17,15 @@ class WorkspaceIndexTest {
         assertEquals("owner/repo", parseRemoteSlug("[remote \"origin\"]\n\turl = git@github.com:owner/repo.git\n"))
         assertEquals("g/p", parseRemoteSlug("[remote \"origin\"]\n\turl = https://gitlab.com/g/p\n"))
         assertNull(parseRemoteSlug("[core]\n\tbare = false\n"))
+    }
+
+    @Test fun `remote workspaces resolve to their folder name without a local path`() {
+        val ref = remoteRefFromWorkspaceUri("vscode-remote://ssh-remote%2Bmyhost/home/me/projects/backend")!!
+        assertEquals("backend", ref.name)
+        assertNull(ref.folderPath)
+        assertNull(remoteRefFromWorkspaceUri("file:///Users/me/work/repo"))
+        val ws = remoteRefFromWorkspaceUri("vscode-remote://wsl%2Bubuntu/home/me/app.code-workspace")!!
+        assertEquals("app", ws.name)
     }
 
     @Test fun `folderName skips git and worktree scaffolding`() {

@@ -14,9 +14,12 @@ class WorkspaceIndex {
     private val cache = HashMap<String, RepoRef>()
 
     fun resolveStorage(dir: File): RepoRef = cache.getOrPut("ws:${dir.absolutePath}") {
-        val folder = readWorkspaceFolder(dir)
-            ?: return@getOrPut RepoRef("(unknown) ${dir.name.take(8)}")
-        resolveFolderUncached(folder)
+        val uri = readWorkspaceUri(dir)
+        if (uri != null) {
+            filePathFromWorkspaceUri(uri)?.let { return@getOrPut resolveFolderUncached(it) }
+            remoteRefFromWorkspaceUri(uri)?.let { return@getOrPut it }
+        }
+        RepoRef("(unknown) ${dir.name.take(8)}")
     }
 
     fun resolveFolder(folderPath: String): RepoRef =
@@ -60,20 +63,47 @@ internal fun folderName(folderPath: String): String {
     return parts.lastOrNull() ?: folderPath
 }
 
-internal fun readWorkspaceFolder(storageDir: File): String? {
+internal fun readWorkspaceFolder(storageDir: File): String? =
+    readWorkspaceUri(storageDir)?.let { filePathFromWorkspaceUri(it) }
+
+private fun readWorkspaceUri(storageDir: File): String? {
     val json = File(storageDir, "workspace.json")
     if (!json.isFile) return null
     return try {
         val parsed = JsonParser.parseString(json.readText()).asJsonObject
-        val uri = sequenceOf("folder", "workspace", "configuration")
+        sequenceOf("folder", "workspace", "configuration")
             .mapNotNull { if (parsed.has(it)) parsed.get(it).asString else null }
-            .firstOrNull { it.startsWith("file://") } ?: return null
-        var fsPath = URLDecoder.decode(uri.removePrefix("file://"), "UTF-8")
-        if (Regex("^/[a-zA-Z]:/").containsMatchIn(fsPath)) fsPath = fsPath.substring(1)
-        fsPath.removeSuffix(".code-workspace")
+            .firstOrNull()
     } catch (_: Exception) {
         null
     }
+}
+
+internal fun filePathFromWorkspaceUri(uri: String): String? {
+    if (!uri.startsWith("file://")) return null
+    var fsPath = URLDecoder.decode(uri.removePrefix("file://"), "UTF-8")
+    if (Regex("^/[a-zA-Z]:/").containsMatchIn(fsPath)) fsPath = fsPath.substring(1)
+    return fsPath.removeSuffix(".code-workspace")
+}
+
+/**
+ * Derive a useful identity for a remotely opened workspace (SSH, dev
+ * container, WSL) whose files are not accessible from this machine —
+ * `vscode-remote://<authority>/<path>`. folderPath stays unset so the
+ * dashboard never tries to open the remote path locally.
+ */
+internal fun remoteRefFromWorkspaceUri(uri: String): RepoRef? {
+    if (!uri.startsWith("vscode-remote://")) return null
+    val rest = uri.removePrefix("vscode-remote://")
+    val slash = rest.indexOf('/')
+    if (slash < 0) return null
+    val remotePath = try {
+        URLDecoder.decode(rest.substring(slash), "UTF-8").removeSuffix(".code-workspace")
+    } catch (_: Exception) {
+        return null
+    }
+    val name = folderName(remotePath)
+    return if (name.isNotEmpty()) RepoRef(name) else null
 }
 
 internal fun readGitRemoteSlug(folderPath: String): String? {

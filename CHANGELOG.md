@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.22.3] — 2026-07-23
+
+Parity with the VS Code edition 1.22.3 — everything added there between 1.14.0 and 1.22.3, ported.
+
+### Added
+
+- **ChatGPT Codex support.** A new data source reads exact per-turn token usage from `~/.codex/sessions` rollout logs, attributed to the repository from the session's working directory. On by default; Codex spend never counts against the Copilot allowance gauge.
+- **Exact chat usage from VS Code ≥ 1.128.** Chat sessions stored as append-only mutation logs (`chatSessions/<id>.jsonl`) are replayed to the final session state; per-request `promptTokens`, `completionTokens` and `copilotCredits` are used directly (credits priced as billed) instead of character-length estimates. Exact Copilot transcript data for the same session still takes precedence.
+- **Rename repositories.** The ✎ button (row hover or detail view) sets a display name — remote repositories no longer show up as `(unknown) 2bebdc79`. Aliases are keyed by the original name so they survive rescans; clear the field to reset.
+- **Hide repositories & manage view.** The 🙈 button removes noise repos from the dashboard, status bar and receipts; raw CSV/JSON exports and budget alerts still count them. The "N hidden — manage" link opens a checklist to unhide.
+- **Today's spend & tokens.** The Spend card badge (and the empty state) shows today's running total, e.g. `Today: $2.40 · 1.9M tokens`; the heatmap tooltip shows per-day tokens; the status bar tooltip shows today's spend.
+- **Status bar modes & sparkline.** Switch the widget between `spend`, `remaining` (counts down AI credits left) and `today`, each with a 7-day unicode sparkline.
+- **Display currency.** Show all dashboard and status-bar amounts in your currency with a manually set exchange rate — the plugin still never touches the network. Internal accounting and PDF receipts stay in USD.
+- **Summary receipt.** The 🧾 toolbar button exports one PDF covering every repository in the selected period — your monthly AI expense document in one click.
+- **Copy Summary as Markdown & Export Summary CSV.** Two new Tools-menu actions: the current month's per-repository costs as a clipboard Markdown table, and a pivot-ready per-repository CSV with a TOTAL row.
+- **Per-project budgets.** Give each project its own monthly USD budget (JSON map in Settings); warned once per day when a project crosses the warn percent.
+- **Runaway-session alert.** Set a session cost threshold and get warned the moment a single session — say, an agent left unattended — crosses it. Each session alerts at most once.
+- **Add Storage Root.** A folder picker right in the empty state (and Settings), so "no data" has a one-click escape hatch.
+- **GPT-5.6 Sol/Terra/Luna pricing** — previously fell back to a generic estimated rate.
+
+### Changed
+
+- Repositories assigned to a project group are hidden from the flat Repositories table — they appear only under their project.
+- Repository and project rows are keyboard-accessible: focus with Tab, open with Enter or Space.
+- Remote SSH, dev-container and WSL workspaces are identified from their `vscode-remote://` metadata instead of showing as `(unknown) <hash>`.
+- The Copilot allowance gauge counts only Copilot products (Chat + CLI); Codex and Claude Code are billed separately.
+- CSV exports always use dot decimal separators regardless of the IDE locale.
+
 ## [1.13.3] — 2026-06-21
 
 Parity with the VS Code edition — everything it does, this does too.

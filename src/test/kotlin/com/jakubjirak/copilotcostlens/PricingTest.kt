@@ -39,6 +39,13 @@ class PricingTest {
         assertEquals(6.25, usd, 1e-9)
     }
 
+    @Test fun `gpt-5-6 codex tiers have official rates`() {
+        assertEquals(5.0, DEFAULT_RATES["gpt-5.6-sol"]!!.input, 1e-9)
+        assertEquals(2.5, DEFAULT_RATES["gpt-5.6-terra"]!!.input, 1e-9)
+        assertEquals(1.0, DEFAULT_RATES["gpt-5.6-luna"]!!.input, 1e-9)
+        assertEquals(6.0, DEFAULT_RATES["gpt-5.6-luna"]!!.output, 1e-9)
+    }
+
     @Test fun `long context tier kicks in above threshold`() {
         val rate = DEFAULT_RATES["gpt-5.5"]!!
         val below = priceTokensUsd(272_000, 1_000_000, 0, 0, rate)

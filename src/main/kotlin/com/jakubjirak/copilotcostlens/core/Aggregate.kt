@@ -24,7 +24,7 @@ data class ModelSummary(
 
 data class ProviderSummary(val provider: String, var credits: Double = 0.0, var usd: Double = 0.0, var requestCount: Int = 0)
 
-data class DayPoint(val day: String, var credits: Double = 0.0, var usd: Double = 0.0)
+data class DayPoint(val day: String, var credits: Double = 0.0, var usd: Double = 0.0, var tokens: Long = 0)
 
 data class MonthPoint(val month: String, var credits: Double = 0.0, var usd: Double = 0.0)
 
@@ -129,6 +129,9 @@ fun availableMonths(events: List<UsageEvent>, now: Long = System.currentTimeMill
 
 // --- builders ---------------------------------------------------------------
 
+private fun eventTokens(e: UsageEvent): Long =
+    e.inputTokens + e.outputTokens + e.cachedTokens + e.cacheWriteTokens
+
 private fun accModel(map: LinkedHashMap<String, ModelSummary>, e: UsageEvent) {
     val m = map.getOrPut(e.model) { ModelSummary(e.model) }
     m.credits += e.credits
@@ -160,7 +163,8 @@ fun buildMonthReport(
 
     for (e in inMonth) {
         totalCredits += e.credits
-        if (e.provider.id != "claude-code") copilotCredits += e.credits
+        // only Copilot products count against the Copilot allowance
+        if (e.provider.id == "copilot" || e.provider.id == "copilot-cli") copilotCredits += e.credits
         sessions += e.sessionId
         if (e.costSource == CostSource.ESTIMATED) hasEstimates = true
         repoMap.getOrPut(e.repo.name) { mutableListOf() } += e
@@ -168,7 +172,7 @@ fun buildMonthReport(
         val p = providerMap.getOrPut(e.provider.id) { ProviderSummary(e.provider.id) }
         p.credits += e.credits; p.usd = creditsToUsd(p.credits); p.requestCount++
         val d = dayMap.getOrPut(dayKey(e.timestamp)) { DayPoint(dayKey(e.timestamp)) }
-        d.credits += e.credits; d.usd = creditsToUsd(d.credits)
+        d.credits += e.credits; d.usd = creditsToUsd(d.credits); d.tokens += eventTokens(e)
     }
 
     val repos = repoMap.values.map { summarizeRepo(it) }.sortedByDescending { it.credits }
@@ -251,21 +255,23 @@ private fun buildMonthsSeries(events: List<UsageEvent>): List<MonthPoint> {
 
 fun buildHeatmap(events: List<UsageEvent>, now: Long = System.currentTimeMillis(), weeks: Int = 26): List<DayPoint> {
     val days = weeks * 7
-    val totals = HashMap<String, Double>()
+    val totals = HashMap<String, DayPoint>()
     val c = cal(now)
     c.set(Calendar.HOUR_OF_DAY, 0); c.set(Calendar.MINUTE, 0); c.set(Calendar.SECOND, 0); c.set(Calendar.MILLISECOND, 0)
     c.add(Calendar.DAY_OF_MONTH, -(days - 1))
     val start = c.timeInMillis
     for (e in events) if (e.timestamp >= start) {
         val k = dayKey(e.timestamp)
-        totals[k] = (totals[k] ?: 0.0) + e.credits
+        val t = totals.getOrPut(k) { DayPoint(k) }
+        t.credits += e.credits
+        t.tokens += eventTokens(e)
     }
     val out = ArrayList<DayPoint>(days)
     val cur = GregorianCalendar().apply { timeInMillis = start }
     repeat(days) {
         val k = dayKey(cur.timeInMillis)
-        val credits = totals[k] ?: 0.0
-        out += DayPoint(k, credits, creditsToUsd(credits))
+        val t = totals[k]
+        out += DayPoint(k, t?.credits ?: 0.0, creditsToUsd(t?.credits ?: 0.0), t?.tokens ?: 0)
         cur.add(Calendar.DAY_OF_MONTH, 1)
     }
     return out
@@ -335,7 +341,7 @@ fun buildRepoDetail(events: List<UsageEvent>, repoName: String, month: String): 
     for (e in filtered) {
         firstActivity = minOf(firstActivity, e.timestamp)
         val d = dayMap.getOrPut(dayKey(e.timestamp)) { DayPoint(dayKey(e.timestamp)) }
-        d.credits += e.credits; d.usd = creditsToUsd(d.credits)
+        d.credits += e.credits; d.usd = creditsToUsd(d.credits); d.tokens += eventTokens(e)
         val p = providerMap.getOrPut(e.provider.id) { ProviderSummary(e.provider.id) }
         p.credits += e.credits; p.usd = creditsToUsd(p.credits); p.requestCount++
         val s = sessionMap.getOrPut(e.sessionId) { SessionSummary(e.sessionId, e.provider.id) }
@@ -362,9 +368,57 @@ fun buildGroupDetail(events: List<UsageEvent>, name: String, members: List<Strin
     val providerMap = LinkedHashMap<String, ProviderSummary>()
     for (e in inScope) {
         val d = dayMap.getOrPut(dayKey(e.timestamp)) { DayPoint(dayKey(e.timestamp)) }
-        d.credits += e.credits; d.usd = creditsToUsd(d.credits)
+        d.credits += e.credits; d.usd = creditsToUsd(d.credits); d.tokens += eventTokens(e)
         val p = providerMap.getOrPut(e.provider.id) { ProviderSummary(e.provider.id) }
         p.credits += e.credits; p.usd = creditsToUsd(p.credits); p.requestCount++
     }
     return GroupDetail(group, dayMap.values.sortedBy { it.day }, providerMap.values.sortedByDescending { it.credits }, month)
+}
+
+// --- session costs & today helpers ------------------------------------------
+
+data class SessionCost(
+    val sessionId: String,
+    var credits: Double = 0.0,
+    var usd: Double = 0.0,
+    var repoName: String = "",
+    var provider: String = "",
+    var lastTimestamp: Long = 0,
+)
+
+/** Total cost per session across all events — used for runaway-session alerts. */
+fun sessionCosts(events: List<UsageEvent>): List<SessionCost> {
+    val map = LinkedHashMap<String, SessionCost>()
+    for (e in events) {
+        val s = map.getOrPut(e.sessionId) { SessionCost(e.sessionId, repoName = e.repo.name, provider = e.provider.id) }
+        s.credits += e.credits
+        if (e.timestamp >= s.lastTimestamp) {
+            s.lastTimestamp = e.timestamp
+            s.repoName = e.repo.name
+        }
+    }
+    for (s in map.values) s.usd = creditsToUsd(s.credits)
+    return map.values.toList()
+}
+
+/** Spend recorded today (local time), 0 when nothing yet. */
+fun todayUsd(report: MonthReport, now: Long = System.currentTimeMillis()): Double {
+    val key = dayKey(now)
+    return report.days.filter { it.day == key }.sumOf { it.usd }
+}
+
+/** Last 7 calendar days of spend as unicode blocks; empty when all zero. */
+fun sparkline(report: MonthReport, now: Long = System.currentTimeMillis()): String {
+    val blocks = "▁▂▃▄▅▆▇█"
+    val byDay = report.days.associate { it.day to it.usd }
+    val values = (6 downTo 0).map { offset ->
+        val c = cal(now)
+        c.add(Calendar.DAY_OF_MONTH, -offset)
+        byDay[dayKey(c.timeInMillis)] ?: 0.0
+    }
+    val max = values.max()
+    if (max <= 0) return ""
+    return values.joinToString("") { v ->
+        blocks[minOf(blocks.length - 1, Math.round(v / max * (blocks.length - 1)).toInt())].toString()
+    }
 }

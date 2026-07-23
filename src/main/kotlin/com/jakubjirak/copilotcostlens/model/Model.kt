@@ -5,6 +5,7 @@ enum class Provider(val id: String) {
     COPILOT("copilot"),
     COPILOT_CLI("copilot-cli"),
     CLAUDE_CODE("claude-code"),
+    CODEX("codex"),
 }
 
 /** How the cost of a usage event was determined. */

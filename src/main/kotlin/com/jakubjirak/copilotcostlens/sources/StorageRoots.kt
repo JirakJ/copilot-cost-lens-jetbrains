@@ -33,3 +33,5 @@ fun listWorkspaceStorageDirs(root: File): List<File> =
 fun defaultClaudeCodeRoot(): File = File(home(), ".claude/projects")
 
 fun defaultCopilotCliRoot(): File = File(home(), ".copilot/session-state")
+
+fun defaultCodexRoot(): File = File(home(), ".codex/sessions")

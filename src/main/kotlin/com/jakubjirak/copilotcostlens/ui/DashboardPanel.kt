@@ -104,19 +104,24 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         return if (s.plan == "custom") s.includedCreditsPerMonth else PLAN_CREDITS[s.plan] ?: 1900
     }
 
-    private fun projectGroups(): Map<String, List<String>> = try {
-        val obj = JsonParser.parseString(settings().projectGroupsJson).asJsonObject
-        obj.entrySet().associate { (k, v) -> k to v.asJsonArray.map { it.asString } }
-    } catch (_: Exception) {
-        emptyMap()
-    }
+    private fun projectGroups(): Map<String, List<String>> =
+        com.jakubjirak.copilotcostlens.data.jsonToGroups(settings().projectGroupsJson)
+
+    private fun repoAliases(): Map<String, String> =
+        com.jakubjirak.copilotcostlens.data.jsonToAliases(settings().repoAliasesJson)
+
+    private fun displayCurrency(): com.jakubjirak.copilotcostlens.core.DisplayCurrency =
+        com.jakubjirak.copilotcostlens.core.sanitizeCurrency(settings().displayCurrency, settings().usdExchangeRate)
+
+    /** Events minus hidden repositories — what the dashboard shows. Raw exports keep the full set. */
+    private fun visibleEvents() = service.visibleEvents
 
     fun refresh() = service.refresh()
 
     // --- messages from the webview --------------------------------------------
 
     private fun currentMonth(): String {
-        val months = availableMonths(store.events)
+        val months = availableMonths(visibleEvents())
         val sel = selectedMonth
         return if (sel == ALL_TIME || (sel != null && months.contains(sel))) sel else months.firstOrNull() ?: ALL_TIME
     }
@@ -131,6 +136,10 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             "selectGroup" -> { selectedGroup = msg.str("group"); selectedRepo = null; postData() }
             "setAllowance" -> setAllowance(msg)
             "toggleStar" -> { msg.str("repo")?.let { toggleStar(it) }; postData() }
+            "renameRepo" -> msg.str("repo")?.let { renameRepo(it) }
+            "toggleHidden" -> msg.str("repo")?.let { toggleHidden(it) }
+            "setHidden" -> setHidden(msg)
+            "addStorageRoot" -> addStorageRoot()
             "saveGroup" -> saveGroup(msg)
             "deleteGroup" -> { msg.str("group")?.let { deleteGroup(it) }; selectedGroup = null; postData() }
             "openRepo" -> msg.str("path")?.let { openFolder(it) }
@@ -140,6 +149,58 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             "export" -> exportData(msg.str("format") ?: "csv")
             "exportInvoice" -> Unit
         }
+    }
+
+    /**
+     * Rename a repository. `currentName` is what the user sees — either the
+     * original resolved name or an existing alias; the alias map is keyed by
+     * the original name so renames stay stable across rescans. Clearing the
+     * input (or typing the original name) removes the alias.
+     */
+    private fun renameRepo(currentName: String) {
+        val aliases = repoAliases()
+        val baseKey = aliases.entries.firstOrNull { it.value.equals(currentName, true) }?.key ?: currentName
+        val input = Messages.showInputDialog(
+            project, "Display name for $baseKey (leave empty to reset)", "Rename Repository", null, currentName, null,
+        ) ?: return
+        val next = aliases.toMutableMap()
+        val trimmed = input.trim()
+        if (trimmed.isEmpty() || trimmed == baseKey) next.remove(baseKey) else next[baseKey] = trimmed
+        CostLensSettings.getInstance().mutate { it.copy(repoAliasesJson = gson.toJson(next)) }
+        service.reconfigure() // aliases are applied while resolving repos during the scan
+    }
+
+    private fun toggleHidden(repo: String) {
+        val current = settings().hiddenRepos
+        val exists = current.any { it.equals(repo, true) }
+        val next = if (exists) current.filterNot { it.equals(repo, true) } else current + repo
+        CostLensSettings.getInstance().mutate { it.copy(hiddenRepos = next) }
+        if (!exists) {
+            selectedRepo = null
+            Messages.showInfoMessage(
+                project, "$repo hidden. Unhide it via the \"N hidden — manage\" link or Settings.", "Copilot Cost Lens",
+            )
+        }
+        postData()
+    }
+
+    /** From the webview's manage-hidden view: the checked entries stay hidden. */
+    private fun setHidden(msg: JsonObject) {
+        val repos = msg.getAsJsonArray("repos")?.mapNotNull { runCatching { it.asString }.getOrNull() } ?: return
+        CostLensSettings.getInstance().mutate { it.copy(hiddenRepos = repos) }
+        postData()
+    }
+
+    /** Folder picker appending to extraStorageRoots — the no-data escape hatch. */
+    private fun addStorageRoot() {
+        val descriptor = com.intellij.openapi.fileChooser.FileChooserDescriptorFactory.createSingleFolderDescriptor()
+            .withTitle("Select a Folder with Copilot/Claude Usage Logs")
+        val folder = com.intellij.openapi.fileChooser.FileChooser.chooseFile(descriptor, project, null)?.path ?: return
+        val current = settings().extraStorageRoots
+        if (folder in current) return
+        CostLensSettings.getInstance().mutate { it.copy(extraStorageRoots = current + folder) }
+        service.reconfigure()
+        Messages.showInfoMessage(project, "Storage root added: $folder", "Copilot Cost Lens")
     }
 
     private fun exportData(format: String) {
@@ -212,17 +273,24 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private fun exportReceipt(msg: JsonObject) {
         val month = currentMonth()
-        val groupName = msg.str("group")
+        val all = msg.get("all")?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.let { it.isBoolean && it.asBoolean } ?: false
         val repoName = msg.str("repo")
+        // summary receipt: every visible repository in the period as one "group"
+        val groupName = if (all) "All repositories" else msg.str("group")
+        val groupMembers: List<String>? = when {
+            all -> buildMonthReport(visibleEvents(), month, 0).repos.map { it.repo.name }.takeIf { it.isNotEmpty() }
+            groupName != null -> projectGroups()[groupName]
+            else -> null
+        }
         val data: ReceiptData? = when {
-            groupName != null -> projectGroups()[groupName]?.let { members ->
-                buildGroupDetail(store.events, groupName, members, month)?.let { d ->
+            groupName != null -> groupMembers?.let { members ->
+                buildGroupDetail(visibleEvents(), groupName, members, month)?.let { d ->
                     receiptFrom(d.group.name, d.group.let { g ->
                         Triple(g.models.map { m -> ReceiptModelLine(m.model, m.requestCount, m.credits, m.usd, m.inputTokens, m.outputTokens, m.cachedTokens, m.cacheWriteTokens) }, listOf(g.inputTokens, g.outputTokens, g.cachedTokens, g.cacheWriteTokens, g.sessionCount.toLong()), Triple(g.credits, g.usd, g.hasEstimates)) },
                         month, d.group.repos.map { it.repo.name to it.usd }, d.providers.map { it.provider to it.usd })
                 }
             }
-            repoName != null -> buildRepoDetail(store.events, repoName, month)?.let { d ->
+            repoName != null -> buildRepoDetail(visibleEvents(), repoName, month)?.let { d ->
                 val s = d.summary
                 receiptFrom(s.repo.name, Triple(s.models.map { m -> ReceiptModelLine(m.model, m.requestCount, m.credits, m.usd, m.inputTokens, m.outputTokens, m.cachedTokens, m.cacheWriteTokens) }, listOf(s.inputTokens, s.outputTokens, s.cachedTokens, s.cacheWriteTokens, s.sessionCount.toLong()), Triple(s.credits, s.usd, s.hasEstimates)),
                     month, emptyList(), d.providers.map { it.provider to it.usd })
@@ -259,7 +327,8 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     private fun providerName(id: String) = when (id) {
-        "copilot" -> "Copilot"; "copilot-cli" -> "Copilot CLI"; "claude-code" -> "Claude Code"; else -> id
+        "copilot" -> "Copilot"; "copilot-cli" -> "Copilot CLI"; "claude-code" -> "Claude Code"
+        "codex" -> "ChatGPT Codex"; else -> id
     }
 
     // --- push data to the webview ---------------------------------------------
@@ -267,7 +336,7 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun postData() {
         val b = browser ?: return
         val month = currentMonth()
-        val events = store.events
+        val events = visibleEvents()
         val groups = projectGroups()
         val report = buildMonthReport(events, month, includedCredits(), groups)
         val detail = selectedRepo?.let { buildRepoDetail(events, it, month) }
@@ -276,6 +345,7 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         if (selectedGroup != null && groupDetail == null) selectedGroup = null
 
         val allRepos = buildMonthReport(events, ALL_TIME, 0).repos.map { mapOf("name" to it.repo.name, "usd" to it.usd) }
+        val currency = displayCurrency()
         val payload = mapOf(
             "type" to "data",
             "report" to report,
@@ -286,6 +356,9 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             "allRepos" to allRepos,
             "groupsConfig" to groups,
             "starred" to settings().starredRepos,
+            "hiddenRepos" to settings().hiddenRepos,
+            "hiddenCount" to settings().hiddenRepos.size,
+            "currency" to mapOf("code" to currency.code, "rate" to currency.rate),
             "stats" to store.stats,
         )
         val json = gson.toJson(payload)
@@ -330,12 +403,6 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun hex(c: Color): String = "#%02x%02x%02x".format(c.red, c.green, c.blue)
 
     private fun color(key: String, fallback: Color): Color = UIManager.getColor(key) ?: fallback
-
-    private fun blend(a: Color, b: Color, t: Double): Color = Color(
-        (a.red + (b.red - a.red) * t).toInt().coerceIn(0, 255),
-        (a.green + (b.green - a.green) * t).toInt().coerceIn(0, 255),
-        (a.blue + (b.blue - a.blue) * t).toInt().coerceIn(0, 255),
-    )
 
     private fun luminance(c: Color): Double = (0.299 * c.red + 0.587 * c.green + 0.114 * c.blue) / 255.0
 
