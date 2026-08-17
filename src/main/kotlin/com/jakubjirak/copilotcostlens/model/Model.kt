@@ -69,4 +69,6 @@ data class LongContextTier(
     val input: Double,
     val cachedInput: Double,
     val output: Double,
+    /** Null when the model has no separate cache-write price at this tier. */
+    val cacheWrite: Double? = null,
 )

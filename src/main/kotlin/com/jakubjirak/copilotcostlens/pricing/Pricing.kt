@@ -22,7 +22,7 @@ val PLAN_CREDITS: Map<String, Int> = mapOf(
 
 /**
  * Built-in price table, USD per 1M tokens. Source: GitHub Copilot "Models and
- * pricing" reference (checked 2026-06-13). Keys are normalized model ids.
+ * pricing" reference (checked 2026-08-17). Keys are normalized model ids.
  */
 val DEFAULT_RATES: Map<String, ModelRate> = mapOf(
     "gpt-4.1" to ModelRate(2.0, 0.5, 8.0),
@@ -36,28 +36,48 @@ val DEFAULT_RATES: Map<String, ModelRate> = mapOf(
     "gpt-5.4-mini" to ModelRate(0.75, 0.075, 4.5),
     "gpt-5.4-nano" to ModelRate(0.2, 0.02, 1.25),
     "gpt-5.5" to ModelRate(5.0, 0.5, 30.0, longContext = LongContextTier(272_000, 10.0, 1.0, 45.0)),
-    "gpt-5.6-sol" to ModelRate(5.0, 0.5, 30.0),
-    "gpt-5.6-terra" to ModelRate(2.5, 0.25, 15.0),
-    "gpt-5.6-luna" to ModelRate(1.0, 0.1, 6.0),
+    "gpt-5.6-sol" to ModelRate(
+        5.0, 0.5, 30.0, 6.25,
+        longContext = LongContextTier(272_000, 10.0, 1.0, 45.0, cacheWrite = 12.5),
+    ),
+    "gpt-5.6-terra" to ModelRate(
+        2.0, 0.2, 12.0, 2.5,
+        longContext = LongContextTier(272_000, 4.0, 0.4, 18.0, cacheWrite = 5.0),
+    ),
+    "gpt-5.6-luna" to ModelRate(
+        0.2, 0.02, 1.2, 0.25,
+        longContext = LongContextTier(272_000, 0.4, 0.04, 1.8, cacheWrite = 0.5),
+    ),
     "claude-haiku-4" to ModelRate(1.0, 0.1, 5.0, 1.25),
     "claude-haiku-4.5" to ModelRate(1.0, 0.1, 5.0, 1.25),
     "claude-sonnet-4" to ModelRate(3.0, 0.3, 15.0, 3.75),
     "claude-sonnet-4.5" to ModelRate(3.0, 0.3, 15.0, 3.75),
     "claude-sonnet-4.6" to ModelRate(3.0, 0.3, 15.0, 3.75),
+    // also the prefix catch-all for future 5.x Sonnet ids
+    "claude-sonnet-5" to ModelRate(2.0, 0.2, 10.0, 2.5),
     "claude-opus-4" to ModelRate(5.0, 0.5, 25.0, 6.25),
     "claude-opus-4.5" to ModelRate(5.0, 0.5, 25.0, 6.25),
     "claude-opus-4.6" to ModelRate(5.0, 0.5, 25.0, 6.25),
     "claude-opus-4.7" to ModelRate(5.0, 0.5, 25.0, 6.25),
     "claude-opus-4.8" to ModelRate(5.0, 0.5, 25.0, 6.25),
+    // catch-all for 5.x Opus ids too ("claude-opus-5[1m]", dated builds)
+    "claude-opus-5" to ModelRate(5.0, 0.5, 25.0, 6.25),
     "claude-fable-5" to ModelRate(10.0, 1.0, 50.0, 12.5),
     "gemini-2.5-pro" to ModelRate(1.25, 0.125, 10.0),
     "gemini-3-pro" to ModelRate(2.0, 0.2, 12.0),
     "gemini-3-flash" to ModelRate(0.5, 0.05, 3.0),
     "gemini-3.1-pro" to ModelRate(2.0, 0.2, 12.0, longContext = LongContextTier(200_000, 4.0, 0.4, 18.0)),
     "gemini-3.5-flash" to ModelRate(1.5, 0.15, 9.0),
+    "gemini-3.6-flash" to ModelRate(0.75, 0.075, 3.75),
+    "gemini-3.7-flash" to ModelRate(0.75, 0.075, 3.75),
     "grok-code-fast-1" to ModelRate(0.2, 0.02, 1.5),
+    "grok-4.5" to ModelRate(2.0, 0.5, 6.0, longContext = LongContextTier(272_000, 4.0, 1.0, 12.0)),
+    "grok-4.6" to ModelRate(2.0, 0.5, 6.0, longContext = LongContextTier(272_000, 4.0, 1.0, 12.0)),
+    "kimi-k2.7-code" to ModelRate(0.95, 0.19, 4.0),
+    "kimi-k3" to ModelRate(3.0, 0.3, 15.0),
     "raptor-mini" to ModelRate(0.25, 0.025, 2.0),
     "mai-code-1-flash" to ModelRate(0.75, 0.075, 4.5),
+    "mai-code-1.1-flash" to ModelRate(0.2, 0.02, 1.2),
     "goldeneye" to ModelRate(1.25, 0.125, 10.0),
 )
 
@@ -134,12 +154,13 @@ fun priceTokensUsd(
 
     val context = freshInput + cached
     val lc = rate.longContext
-    val (rIn, rCached, rOut) = if (lc != null && context > lc.threshold) {
-        Triple(lc.input, lc.cachedInput, lc.output)
+    val longContextApplies = lc != null && context > lc.threshold
+    val (rIn, rCached, rOut) = if (longContextApplies) {
+        Triple(lc!!.input, lc.cachedInput, lc.output)
     } else {
         Triple(rate.input, rate.cachedInput, rate.output)
     }
-    val rCacheWrite = rate.cacheWrite ?: rIn
+    val rCacheWrite = (if (longContextApplies) lc!!.cacheWrite else null) ?: rate.cacheWrite ?: rIn
 
     return (freshInput / m) * rIn +
         (cached / m) * rCached +

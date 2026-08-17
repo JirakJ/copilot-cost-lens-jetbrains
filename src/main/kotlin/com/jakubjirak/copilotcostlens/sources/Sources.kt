@@ -234,11 +234,24 @@ private fun applyLogPush(state: JsonElement?, keys: List<JsonPrimitive>, values:
 // Claude Code — exact per-request usage from ~/.claude/projects
 // ---------------------------------------------------------------------------
 
+/**
+ * Discovers every transcript below `~/.claude/projects`, including subagent and
+ * workflow runs written to `<sessionId>/subagents/…` rather than the flat
+ * project directory. Those turns are billed API calls of their own, and their
+ * message ids never collide with the parent session's, so walking the whole
+ * tree adds real usage without double counting.
+ */
 fun findClaudeCodeFiles(root: File): List<File> {
     val files = mutableListOf<File>()
-    root.listFiles { f -> f.isDirectory }?.forEach { proj ->
-        proj.listFiles { f -> f.name.endsWith(".jsonl") }?.forEach { files += it }
+    fun walk(dir: File) {
+        dir.listFiles()?.forEach { entry ->
+            when {
+                entry.isDirectory -> walk(entry)
+                entry.name.endsWith(".jsonl") -> files += entry
+            }
+        }
     }
+    walk(root)
     return files
 }
 

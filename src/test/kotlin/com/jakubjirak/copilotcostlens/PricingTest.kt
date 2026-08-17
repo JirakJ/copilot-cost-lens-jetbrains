@@ -41,9 +41,37 @@ class PricingTest {
 
     @Test fun `gpt-5-6 codex tiers have official rates`() {
         assertEquals(5.0, DEFAULT_RATES["gpt-5.6-sol"]!!.input, 1e-9)
-        assertEquals(2.5, DEFAULT_RATES["gpt-5.6-terra"]!!.input, 1e-9)
-        assertEquals(1.0, DEFAULT_RATES["gpt-5.6-luna"]!!.input, 1e-9)
-        assertEquals(6.0, DEFAULT_RATES["gpt-5.6-luna"]!!.output, 1e-9)
+        assertEquals(2.0, DEFAULT_RATES["gpt-5.6-terra"]!!.input, 1e-9)
+        assertEquals(0.2, DEFAULT_RATES["gpt-5.6-luna"]!!.input, 1e-9)
+        assertEquals(1.2, DEFAULT_RATES["gpt-5.6-luna"]!!.output, 1e-9)
+        // Sol and Terra bill cache writes and have long-context tiers
+        assertEquals(6.25, DEFAULT_RATES["gpt-5.6-sol"]!!.cacheWrite!!, 1e-9)
+        assertEquals(45.0, DEFAULT_RATES["gpt-5.6-sol"]!!.longContext!!.output, 1e-9)
+        assertEquals(12.0, DEFAULT_RATES["gpt-5.6-terra"]!!.output, 1e-9)
+    }
+
+    @Test fun `claude 5 family is priced instead of falling back`() {
+        val opus5 = Pricing().rateFor("claude-opus-5")
+        assertEquals(5.0, opus5.input, 1e-9)
+        assertEquals(0.5, opus5.cachedInput, 1e-9)
+        assertEquals(6.25, opus5.cacheWrite!!, 1e-9)
+        assertEquals(25.0, opus5.output, 1e-9)
+
+        val sonnet5 = Pricing().rateFor("claude-sonnet-5")
+        assertEquals(2.0, sonnet5.input, 1e-9)
+        assertEquals(2.5, sonnet5.cacheWrite!!, 1e-9)
+        assertEquals(10.0, sonnet5.output, 1e-9)
+
+        // context-window and date suffixes must not knock the model off its rate
+        assertEquals(opus5, Pricing().rateFor("claude-opus-5[1m]"))
+        assertEquals(opus5, Pricing().rateFor("claude-opus-5-20260601"))
+    }
+
+    @Test fun `long context tier bills cache writes at its own rate`() {
+        val rate = DEFAULT_RATES["gpt-5.6-sol"]!!
+        // 300k context crosses the 272k threshold → cache write at $12.50, not $6.25
+        val usd = priceTokensUsd(300_000, 0, 0, 1_000_000, rate)
+        assertEquals(0.3 * 10.0 + 12.5, usd, 1e-6)
     }
 
     @Test fun `long context tier kicks in above threshold`() {
