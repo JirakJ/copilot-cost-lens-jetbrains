@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.22.5] — 2026-09-09
+
+### Fixed
+
+- **The dashboard failed to open on IntelliJ 2026.2.** Build 262 extracted JCEF from the core platform into the separate bundled plugin `com.intellij.modules.jcef`. `DashboardPanel` called `JBCefApp.isSupported()` with no guard, so the class simply was not there and the panel blew up with `NoClassDefFoundError` — an `Error`, which ordinary `catch (e: Exception)` guards do not catch. The plugin now declares `com.intellij.modules.jcef` as an **optional** dependency (the id does not exist before 2026.2, and a mandatory one would make the plugin unloadable on 2024.3–2026.1), and all JCEF access goes through `JcefSupport`, which treats `LinkageError` as "no embedded browser". Without JCEF the panel shows its existing fallback message instead of failing.
+
+### Changed
+
+- Plugin Verifier now also runs against IU 2026.2.1 (IntelliJ IDEA Community is not published for 2026.x).
+
 ## [1.22.4] — 2026-08-17
 
 ### Fixed

@@ -1,0 +1,11 @@
+<!--
+  Loaded only when the IDE provides the `com.intellij.modules.jcef` plugin (IntelliJ 2026.2 / build
+  262 and later, where JCEF was extracted from the core platform into its own bundled plugin).
+
+  It intentionally registers nothing. Its sole purpose is to give the optional <depends> in
+  plugin.xml a config file, which makes the platform add the JCEF classloader to this plugin's
+  parent classloaders so that com.intellij.ui.jcef.JBCefApp resolves. On IDEs where JCEF is still
+  part of the core platform the dependency is simply not resolved and nothing changes.
+-->
+<idea-plugin>
+</idea-plugin>

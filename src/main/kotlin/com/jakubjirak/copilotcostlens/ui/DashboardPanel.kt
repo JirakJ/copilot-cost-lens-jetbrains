@@ -14,7 +14,6 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.jakubjirak.copilotcostlens.core.ALL_TIME
@@ -53,7 +52,9 @@ class DashboardPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private val unsubscribe: () -> Unit
 
     init {
-        if (JBCefApp.isSupported()) initBrowser() else fallback()
+        // JCEF can be absent entirely (see JcefSupport): probe and construction are both
+        // guarded so a missing embedded browser degrades to the fallback message.
+        if (!JcefSupport.isAvailable() || !JcefSupport.runGuarded { initBrowser() }) fallback()
         // shared service already scans on its own; repaint when it has data
         unsubscribe = service.addListener { ApplicationManager.getApplication().invokeLater { if (ready) postData() } }
         service.refresh()

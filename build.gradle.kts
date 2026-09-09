@@ -73,6 +73,9 @@ intellijPlatform {
             // pinned: recommended() resolves releases with no downloadable artifact (2025.3)
             ide(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdeaCommunity, "2024.3")
             ide(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdeaCommunity, "2025.2")
+            // 2026.2 moved JCEF into a separate bundled plugin; Community is not published for
+            // 2026.x, so the 262 baseline is verified on Ultimate.
+            ide(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdeaUltimate, "2026.2.1")
         }
     }
 }

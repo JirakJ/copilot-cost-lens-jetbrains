@@ -30,6 +30,11 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>1.22.5 - Compatibility fix</h3>
+        <ul>
+            <li><b>Fixed: the dashboard failed to open on IntelliJ 2026.2</b> - 2026.2 moved JCEF out of the core platform into a separate bundled plugin, so the panel could no longer resolve <code>JBCefApp</code> and threw <code>NoClassDefFoundError</code>. The plugin now declares the JCEF module, and a missing embedded browser degrades to the existing fallback message instead of failing</li>
+        </ul>
+
 <ul>
   <li><b>1.22.4</b> — Fixes under-counted spend. <b>Claude Code subagent and workflow turns are now counted</b>: they are written to <code>&lt;sessionId&gt;/subagents/…</code> rather than the flat project directory, so a scan that only looked one level deep missed the majority of real usage on agent-heavy months. <b>Claude Opus 5 and Sonnet 5 now have prices</b> instead of falling through to the generic fallback rate, which billed Opus 5 at $2/$10 per 1M instead of $5/$25. <b>GPT-5.6 rates refreshed</b>: Luna dropped to $0.20/$1.20, Sol and Terra gained cache-write and long-context tiers. Added Gemini 3.6/3.7 Flash, Grok 4.5/4.6, Kimi K2.7 Code, Kimi K3 and MAI-Code-1.1-Flash.</li>
   <li><b>1.22.3</b> — Parity with the VS Code edition 1.22.3: <b>ChatGPT Codex</b> as a new data source; VS Code ≥ 1.128 chat-session logs (<code>.jsonl</code>) with exact token counts; rename &amp; hide repositories (with a manage view); today's spend &amp; tokens on the dashboard and in the status bar; status-bar modes (spend / remaining / today) with a 7-day sparkline; display currency with a manual rate; summary receipt for the whole period; Copy Summary as Markdown and Export Summary CSV actions; per-project budgets and runaway-session alerts; Add Storage Root from the empty state; GPT-5.6 Sol/Terra/Luna pricing; remote (SSH/dev-container/WSL) workspaces named correctly.</li>
@@ -39,6 +44,13 @@
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
+    <!--
+      JCEF (com.intellij.ui.jcef.*) renders the dashboard. Up to IntelliJ 2026.1 it is part of the
+      core platform; from 2026.2 (build 262) it lives in the separate bundled plugin
+      com.intellij.modules.jcef, and a plugin that does not depend on it cannot resolve JBCefApp.
+      Optional so the plugin keeps loading on 2024.3-2026.1, where that id does not exist.
+    -->
+    <depends optional="true" config-file="copilot-cost-lens-jcef.xml">com.intellij.modules.jcef</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow
